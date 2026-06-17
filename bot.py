@@ -707,7 +707,6 @@ async def main():
     
     # 3. Очищаем вебхуки и запускаем поллинг (самым последним!)
     logging.info("Starting bot polling...")
-    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
