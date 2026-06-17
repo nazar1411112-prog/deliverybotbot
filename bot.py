@@ -61,8 +61,8 @@ TEXTS = {
         'client_menu': "🏬 Вы в меню клиента.\n/order — Создать заказ\n/cancel — Отменить мой текущий заказ",
         'courier_menu': "🛵 Вы в меню курьера.\n/online — Встать на смену\n/offline — Уйти со смены\n/orders — Список доступных заказов",
         'cargo_type': "📦 Выберите тип доставки:",
-        'std': "📦 Стандарт (10 лей/км + 40 лей)",
-        'frg': "🚚 Грузовой (20 лей/км + 40 лей)",
+        'std': "📦 Стандарт (10 лей/км)",
+        'frg': "🚚 Грузовой (20 лей/км )",
         'addr_a': "📍 Отправьте геопозицию ТОЧКИ А (Откуда вас забрать) с помощью кнопки ниже 👇:",
         'addr_b': "🏁 Отправьте геопозицию НАЗНАЧЕНИЯ Б (Куда везти) с помощью кнопки ниже 👇:",
         'phone_sender': "📱 Введите номер телефона ОТПРАВИТЕЛЯ:",
@@ -100,8 +100,8 @@ TEXTS = {
         'client_menu': "🏬 Sunteți în meniul clientului.\n/order — Crează comandă\n/cancel — Anulează comanda curentă",
         'courier_menu': "🛵 Sunteți în meniul curierului.\n/online — Intră pe tură\n/offline — Ieși de pe tură\n/orders — Lista comenzilor disponibile",
         'cargo_type': "📦 Selectați tipul de livrare:",
-        'std': "📦 Standard (10 MDL/km + 40 MDL)",
-        'frg': "🚚 Marfă (20 MDL/km + 40 MDL)",
+        'std': "📦 Standard (10 MDL/km )",
+        'frg': "🚚 Marfă (20 MDL/km )",
         'addr_a': "📍 Trimiteți locația PUNCTULAI A (De unde preluăm) folosind butonul de mai jos 👇:",
         'addr_b': "🏁 Trimiteți locația DESTINAȚIEI B (Unde livrăm) folosind butonul de mai jos 👇:",
         'phone_sender': "📱 Introduceți numărul de telefon al EXPEDITORULUI:",
@@ -139,8 +139,8 @@ TEXTS = {
         'client_menu': "🏬 You are in the client menu.\n/order — Create an order\n/cancel — Cancel my current order",
         'courier_menu': "🛵 You are in the courier menu.\n/online — Go online\n/offline — Go offline\n/orders — View available orders",
         'cargo_type': "📦 Select delivery type:",
-        'std': "📦 Standard (10 MDL/km + 40 MDL)",
-        'frg': "🚚 Freight (20 MDL/km + 40 MDL)",
+        'std': "📦 Standard (10 MDL/km)",
+        'frg': "🚚 Freight (20 MDL/km )",
         'addr_a': "📍 Send the location of POINT A (Pickup) using the button below 👇:",
         'addr_b': "🏁 Send the location of DESTINATION B (Dropoff) using the button below 👇:",
         'phone_sender': "📱 Enter SENDER'S phone number:",
@@ -415,25 +415,22 @@ async def order_comment(message: Message, state: FSMContext):
     await state.update_data(comment=comm)
     
     data = await state.get_data()
-    dist, map_url = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
+    dist, _ = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
     
     rate = 10 if data['cargo_type'] == 'standard' else 20
-    
-    # Расчет: (Дистанция * тариф) + 40 леев фиксированной надбавки
     price = round((dist * rate) + 40.0, 2)
-    if price < 40: price = 40.0 # Минималка теперь не может быть ниже надбавки
+    if price < 40: price = 40.0
     
     await state.update_data(price=price)
+    
+    # Текст сообщения теперь без подробностей "плюс 40"
+    txt = f"📋 Подтверждение заказа:\n\n🔹 Тип: {data['cargo_type']}\n🔹 Откуда: {data['addr_a']}\n🔹 Куда: {data['addr_b']}\n🔹 Тел: {data['phone_sender']} / {data['phone_receiver']}\n🔹 Комм: {comm}\n💵 Итоговая стоимость: {price} MDL\n\nВсё верно?"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=TEXTS[lang]['yes'], callback_data="confirm_order_yes")],
         [InlineKeyboardButton(text=TEXTS[lang]['no'], callback_data="confirm_order_no")]
     ])
     
-    txt = TEXTS[lang]['confirm_title'].format(
-        type=data['cargo_type'], a=data['addr_a'], b=data['addr_b'], 
-        p_send=data['phone_sender'], p_recv=data['phone_receiver'], comm=comm, price=price
-    )
     await message.answer(txt, reply_markup=kb)
     await state.set_state(CreateOrder.confirm)
 
@@ -564,7 +561,6 @@ async def client_afk_worker(client_id, order_id, courier_id):
     except asyncio.CancelledError:
         pass
 
-# --- ЭТАПЫ СТАТУСОВ КУРЬЕРА ---
 @router.callback_query(F.data.startswith("sta_"))
 async def handle_courier_stages(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
@@ -587,8 +583,8 @@ async def handle_courier_stages(callback: CallbackQuery):
             return
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status = 'pending', courier_id = NULL WHERE id = $1", order_id)
-        await callback.message.edit_text("Вы отказались от заказа. Он возвращен в общий список.")
-        await bot.send_message(order['client_id'], "⚠️ Курьер отказался от вашего заказа. Мы ищем нового курьера.")
+        await callback.message.edit_text("Вы отказались от заказа.")
+        await bot.send_message(order['client_id'], "⚠️ Курьер отказался от вашего заказа.")
         
     elif action == "ata":
         async with db_pool.acquire() as conn:
@@ -596,10 +592,7 @@ async def handle_courier_stages(callback: CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"sta_atb_{order_id}")]
         ])
-        try:
-            await callback.message.edit_reply_markup(reply_markup=kb)
-        except TelegramBadRequest: pass
-        
+        await callback.message.edit_reply_markup(reply_markup=kb)
         await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_a'])
         task = asyncio.create_task(client_afk_worker(order['client_id'], order_id, callback.from_user.id))
         active_afk_tasks[order_id] = task
@@ -608,6 +601,22 @@ async def handle_courier_stages(callback: CallbackQuery):
         if order_id in active_afk_tasks:
             active_afk_tasks[order_id].cancel()
             del active_afk_tasks[order_id]
+            
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"sta_done_{order_id}")]
+        ])
+        await callback.message.edit_reply_markup(reply_markup=kb)
+        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_b'])
+
+    elif action == "done":
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
+        await callback.message.edit_text(f"✅ Заказ #{order_id} успешно завершен! Сумма к получению: {order['price']} MDL.")
+        await bot.send_message(order['client_id'], "✅ Заказ завершен. Спасибо, что выбрали нас!")
+        
+    await callback.answer()
             
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
