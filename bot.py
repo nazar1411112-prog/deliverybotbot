@@ -691,22 +691,7 @@ async def handle_courier_stages(callback: CallbackQuery):
 
     await callback.answer()
             
-        async with db_pool.acquire() as conn:
-            await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"sta_done_{order_id}")]
-        ])
-        try:
-            await callback.message.edit_reply_markup(reply_markup=kb)
-        except TelegramBadRequest: pass
-        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_b'])
         
-    elif action == "done":
-        async with db_pool.acquire() as conn:
-            await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
-        await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL добавлена в вашу историю.")
-        await bot.send_message(order['client_id'], f"🏁 Спасибо! Заказ #{order_id} завершен. Способ оплаты: Наличные ({order['price']} MDL).")
-    await callback.answer()
 
 # --- ОТВЕТ КЛИЕНТА НА КНОПКУ АФК ---
 @router.callback_query(F.data.startswith("afk_ok_"))
@@ -773,7 +758,7 @@ async def admin_stats(message: Message):
         return
         
     async with db_pool.acquire() as conn:
-        orders = await conn.fetch("SELECT status, COUNT(*) FROM orders GROUP BY status")
+       orders = await conn.fetch("SELECT status, COUNT(*) AS count FROM orders GROUP BY status")
         stats_text = "📊 Статистика заказов:\n" + "\n".join([f"{row['status']}: {row['count']}" for row in orders])
         await message.answer(stats_text)
 
