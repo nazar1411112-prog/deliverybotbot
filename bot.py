@@ -693,6 +693,11 @@ async def start_render_port_binding():
     logging.info(f"Port binding active on port {port}")
 
 async def main():
+    # Очистка webhook перед запуском поллинга
+    await bot.delete_webhook(drop_pending_updates=True) 
+    
+    logging.info("Starting database tables preparation...")
+    # ... остальной код ...
     await init_db()
     await start_render_port_binding()
     await dp.start_polling(bot)
