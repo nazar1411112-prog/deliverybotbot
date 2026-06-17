@@ -42,8 +42,8 @@ class CreateOrder(StatesGroup):
     cargo_type = State()
     addr_a = State()
     addr_b = State()
-    phone_sender = State()    # Разделили телефон на отправителя
-    phone_receiver = State()  # и получателя
+    phone_sender = State()
+    phone_receiver = State()
     comment = State()
     confirm = State()
 
@@ -202,7 +202,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         ''')
-        # Миграция БД (на случай, если старая колонка phone ещё существует)
         try:
             await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone_sender TEXT;")
             await conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone_receiver TEXT;")
@@ -423,7 +422,6 @@ async def order_comment(message: Message, state: FSMContext):
     
     await state.update_data(price=price)
     
-    # Текст сообщения теперь без подробностей "плюс 40"
     txt = f"📋 Подтверждение заказа:\n\n🔹 Тип: {data['cargo_type']}\n🔹 Откуда: {data['addr_a']}\n🔹 Куда: {data['addr_b']}\n🔹 Тел: {data['phone_sender']} / {data['phone_receiver']}\n🔹 Комм: {comm}\n💵 Итоговая стоимость: {price} MDL\n\nВсё верно?"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -574,10 +572,7 @@ async def handle_courier_stages(callback: CallbackQuery):
         order_id = int(parts[2])
 
     async with db_pool.acquire() as conn:
-        order = await conn.fetchrow(
-            "SELECT * FROM orders WHERE id = $1",
-            order_id
-        )
+        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
 
     if not order:
         await callback.answer("Заказ не найден.", show_alert=True)
@@ -587,111 +582,43 @@ async def handle_courier_stages(callback: CallbackQuery):
 
     if action == "curr_cncl":
         if order["status"] != "accepted":
-            await callback.answer(
-                TEXTS[lang]["cant_cancel"],
-                show_alert=True
-            )
+            await callback.answer(TEXTS[lang]["cant_cancel"], show_alert=True)
             return
-
         async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE orders SET status='pending', courier_id=NULL WHERE id=$1",
-                order_id
-            )
-
+            await conn.execute("UPDATE orders SET status='pending', courier_id=NULL WHERE id=$1", order_id)
         await callback.message.edit_text("❌ Вы отказались от заказа.")
-        await bot.send_message(
-            order["client_id"],
-            "⚠️ Курьер отказался от вашего заказа."
-        )
+        await bot.send_message(order["client_id"], "⚠️ Курьер отказался от вашего заказа.")
 
     elif action == "ata":
         async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE orders SET status='at_a' WHERE id=$1",
-                order_id
-            )
-
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=TEXTS[lang]["at_b_btn"],
-                        callback_data=f"sta_atb_{order_id}"
-                    )
-                ]
-            ]
-        )
-
+            await conn.execute("UPDATE orders SET status='at_a' WHERE id=$1", order_id)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=TEXTS[lang]["at_b_btn"], callback_data=f"sta_atb_{order_id}")]
+        ])
         await callback.message.edit_reply_markup(reply_markup=kb)
-
-        await bot.send_message(
-            order["client_id"],
-            TEXTS[client_lang]["client_notif_courier_at_a"]
-        )
-
-        task = asyncio.create_task(
-            client_afk_worker(
-                order["client_id"],
-                order_id,
-                callback.from_user.id
-            )
-        )
-
+        await bot.send_message(order["client_id"], TEXTS[client_lang]["client_notif_courier_at_a"])
+        task = asyncio.create_task(client_afk_worker(order["client_id"], order_id, callback.from_user.id))
         active_afk_tasks[order_id] = task
 
     elif action == "atb":
-
         if order_id in active_afk_tasks:
             active_afk_tasks[order_id].cancel()
             del active_afk_tasks[order_id]
-
         async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE orders SET status='at_b' WHERE id=$1",
-                order_id
-            )
-
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=TEXTS[lang]["done_btn"],
-                        callback_data=f"sta_done_{order_id}"
-                    )
-                ]
-            ]
-        )
-
+            await conn.execute("UPDATE orders SET status='at_b' WHERE id=$1", order_id)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=TEXTS[lang]["done_btn"], callback_data=f"sta_done_{order_id}")]
+        ])
         await callback.message.edit_reply_markup(reply_markup=kb)
-
-        await bot.send_message(
-            order["client_id"],
-            TEXTS[client_lang]["client_notif_courier_at_b"]
-        )
+        await bot.send_message(order["client_id"], TEXTS[client_lang]["client_notif_courier_at_b"])
 
     elif action == "done":
-
         async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE orders SET status='completed' WHERE id=$1",
-                order_id
-            )
-
-        await callback.message.edit_text(
-            f"💵 Заказ #{order_id} успешно выполнен! "
-            f"Сумма {order['price']} MDL добавлена в историю."
-        )
-
-        await bot.send_message(
-            order["client_id"],
-            f"🏁 Спасибо! Заказ #{order_id} завершён.\n"
-            f"Оплата наличными: {order['price']} MDL."
-        )
+            await conn.execute("UPDATE orders SET status='completed' WHERE id=$1", order_id)
+        await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL добавлена в историю.")
+        await bot.send_message(order["client_id"], f"🏁 Спасибо! Заказ #{order_id} завершён.\nОплата наличными: {order['price']} MDL.")
 
     await callback.answer()
-            
-        
 
 # --- ОТВЕТ КЛИЕНТА НА КНОПКУ АФК ---
 @router.callback_query(F.data.startswith("afk_ok_"))
@@ -714,61 +641,36 @@ async def client_cancel_order(message: Message):
             "SELECT id, status, courier_id FROM orders WHERE client_id = $1 AND status IN ('pending', 'accepted', 'at_a') ORDER BY id DESC LIMIT 1", 
             message.from_user.id
         )
-        
         if not order:
             await message.answer("⚠️ У вас нет активных заказов для отмены.")
             return
-            
         if order['status'] == 'at_a':
             await message.answer(TEXTS[lang]['cant_cancel'])
             return
-            
         await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", order['id'])
-        
         if order['courier_id']:
             try:
-                cr_lang = await get_lang(order['courier_id'])
                 await bot.send_message(order['courier_id'], f"🔴 Клиент отменил заказ #{order['id']}.")
             except Exception: pass
-            
     await message.answer(TEXTS[lang]['order_cancelled'])
-
-
 
 # --- АДМИНСКАЯ КОМАНДА ДЛЯ ОЧИСТКИ ЗАКАЗОВ ---
 @router.message(Command("clear_orders"))
 async def admin_clear_orders(message: Message):
-    # Проверка, является ли пользователь администратором
-    if message.from_user.id != ADMIN_ID:
-        return # Игнорируем обычных пользователей
-
+    if message.from_user.id != ADMIN_ID: return
     async with db_pool.acquire() as conn:
-        # Удаляем все заказы, которые еще не были приняты курьерами
         result = await conn.execute("DELETE FROM orders WHERE status = 'pending'")
-        
-    # Парсим количество удаленных записей из строки ответа БД (например, "DELETE 5")
     count = result.split()[-1]
-    
     await message.answer(f"🧹 База очищена от висящих заказов.\nУдалено записей: {count}")
 
-# --- ФУНКЦИЯ ДЛЯ АДМИНА: ПОСМОТРЕТЬ ВСЕ АКТИВНЫЕ ЗАКАЗЫ (ОПЦИОНАЛЬНО) ---
 @router.message(Command("stats"))
 async def admin_stats(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
+    if message.from_user.id != ADMIN_ID: return
     async with db_pool.acquire() as conn:
-        orders = await conn.fetch(
-            "SELECT status, COUNT(*) AS count FROM orders GROUP BY status"
-        )
+        orders = await conn.fetch("SELECT status, COUNT(*) FROM orders GROUP BY status")
+        stats_text = "📊 Статистика заказов:\n" + "\n".join([f"{row['status']}: {row['count']}" for row in orders])
+        await message.answer(stats_text)
 
-    stats_text = "📊 Статистика заказов:\n" + "\n".join(
-        [f"{row['status']}: {row['count']}" for row in orders]
-    )
-
-    await message.answer(stats_text)
-
-# --- ВЕБ-СЕРВЕР ДЛЯ ПРОХОЖДЕНИЯ ПРОВЕРКИ RENDER ---
 async def handle_ping(request):
     return web.Response(text="Bot status: Live and healthy", status=200)
 
@@ -782,14 +684,11 @@ async def start_render_port_binding():
     await site.start()
     logging.info(f"[Render] Port binding server successfully active on port {port}")
 
-# --- ГЛАВНАЯ ТОЧКА ВХОДА ---
 async def main():
     logging.info("Starting database tables preparation...")
     await init_db()
-    
     logging.info("Starting fake web-server binding...")
     await start_render_port_binding()
-    
     logging.info("Running long polling...")
     try:
         await dp.start_polling(bot)
