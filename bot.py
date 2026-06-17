@@ -565,63 +565,130 @@ async def client_afk_worker(client_id, order_id, courier_id):
 async def handle_courier_stages(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     parts = callback.data.split("_")
-    # Структура: sta_действие_id (или sta_группа_действие_id)
-    
-    # Исправленный парсинг для разных длин callback_data
+
     if parts[1] == "curr" and parts[2] == "cncl":
         action = "curr_cncl"
         order_id = int(parts[3])
     else:
         action = parts[1]
         order_id = int(parts[2])
-    
+
     async with db_pool.acquire() as conn:
-        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
-        
+        order = await conn.fetchrow(
+            "SELECT * FROM orders WHERE id = $1",
+            order_id
+        )
+
     if not order:
-        await callback.answer("Заказ не найден.")
+        await callback.answer("Заказ не найден.", show_alert=True)
         return
 
-    client_lang = await get_lang(order['client_id'])
+    client_lang = await get_lang(order["client_id"])
 
     if action == "curr_cncl":
-        if order['status'] != 'accepted':
-            await callback.answer(TEXTS[lang]['cant_cancel'], show_alert=True)
+        if order["status"] != "accepted":
+            await callback.answer(
+                TEXTS[lang]["cant_cancel"],
+                show_alert=True
+            )
             return
+
         async with db_pool.acquire() as conn:
-            await conn.execute("UPDATE orders SET status = 'pending', courier_id = NULL WHERE id = $1", order_id)
-        await callback.message.edit_text("Вы отказались от заказа.")
-        await bot.send_message(order['client_id'], "⚠️ Курьер отказался от вашего заказа.")
-        
+            await conn.execute(
+                "UPDATE orders SET status='pending', courier_id=NULL WHERE id=$1",
+                order_id
+            )
+
+        await callback.message.edit_text("❌ Вы отказались от заказа.")
+        await bot.send_message(
+            order["client_id"],
+            "⚠️ Курьер отказался от вашего заказа."
+        )
+
     elif action == "ata":
         async with db_pool.acquire() as conn:
-            await conn.execute("UPDATE orders SET status = 'at_a' WHERE id = $1", order_id)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"sta_atb_{order_id}")]
-        ])
+            await conn.execute(
+                "UPDATE orders SET status='at_a' WHERE id=$1",
+                order_id
+            )
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=TEXTS[lang]["at_b_btn"],
+                        callback_data=f"sta_atb_{order_id}"
+                    )
+                ]
+            ]
+        )
+
         await callback.message.edit_reply_markup(reply_markup=kb)
-        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_a'])
-        task = asyncio.create_task(client_afk_worker(order['client_id'], order_id, callback.from_user.id))
+
+        await bot.send_message(
+            order["client_id"],
+            TEXTS[client_lang]["client_notif_courier_at_a"]
+        )
+
+        task = asyncio.create_task(
+            client_afk_worker(
+                order["client_id"],
+                order_id,
+                callback.from_user.id
+            )
+        )
+
         active_afk_tasks[order_id] = task
-        
+
     elif action == "atb":
+
         if order_id in active_afk_tasks:
             active_afk_tasks[order_id].cancel()
             del active_afk_tasks[order_id]
+
         async with db_pool.acquire() as conn:
-            await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"sta_done_{order_id}")]
-        ])
+            await conn.execute(
+                "UPDATE orders SET status='at_b' WHERE id=$1",
+                order_id
+            )
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=TEXTS[lang]["done_btn"],
+                        callback_data=f"sta_done_{order_id}"
+                    )
+                ]
+            ]
+        )
+
         await callback.message.edit_reply_markup(reply_markup=kb)
-        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_b'])
+
+        await bot.send_message(
+            order["client_id"],
+            TEXTS[client_lang]["client_notif_courier_at_b"]
+        )
 
     elif action == "done":
+
         async with db_pool.acquire() as conn:
-            await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
-        await callback.message.edit_text(f"✅ Заказ #{order_id} успешно завершен!")
-        await bot.send_message(order['client_id'], "✅ Заказ завершен. Спасибо!")
-        
+            await conn.execute(
+                "UPDATE orders SET status='completed' WHERE id=$1",
+                order_id
+            )
+
+        await callback.message.edit_text(
+            f"💵 Заказ #{order_id} успешно выполнен! "
+            f"Сумма {order['price']} MDL добавлена в историю."
+        )
+
+        await bot.send_message(
+            order["client_id"],
+            f"🏁 Спасибо! Заказ #{order_id} завершён.\n"
+            f"Оплата наличными: {order['price']} MDL."
+        )
+
     await callback.answer()
             
         async with db_pool.acquire() as conn:
