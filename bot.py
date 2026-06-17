@@ -694,7 +694,8 @@ async def start_render_port_binding():
 
 async def main():
     # Очистка webhook перед запуском поллинга
-    await bot.delete_webhook(drop_pending_updates=True) 
+    await bot.delete_webhook(drop_pending_updates=True)
+await dp.start_polling(bot, drop_pending_updates=True)
     
     logging.info("Starting database tables preparation...")
     # ... остальной код ...
