@@ -692,6 +692,22 @@ async def main():
     logging.info("Start polling")
     await dp.start_polling(bot)
 
+
+# --- АДМИН-КОМАНДА ДЛЯ СБРОСА ТЕСТОВЫХ ЗАКАЗОВ ---
+@router.message(Command("reset_orders"))
+async def admin_reset_orders(message: Message):
+    # Строгая проверка: если пишет не админ, бот просто игнорирует команду
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    async with db_pool.acquire() as conn:
+        # 1. Полностью очищаем таблицу заказов
+        await conn.execute("DELETE FROM orders;")
+        # 2. Сбрасываем автоинкремент (счетчик ID заново с 1)
+        await conn.execute("ALTER SEQUENCE orders_id_seq RESTART WITH 1;")
+        
+    await message.answer("🧹 *База данных очищена!* Все тестовые заказы удалены, счетчик ID сброшен.", parse_mode="Markdown")
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
