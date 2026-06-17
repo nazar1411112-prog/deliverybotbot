@@ -416,15 +416,16 @@ async def order_comment(message: Message, state: FSMContext):
     data = await state.get_data()
     dist, _ = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
     
-rate = 10 if data['cargo_type'] == 'standard' else 20
+    rate = 10 if data['cargo_type'] == 'standard' else 20
     
-    # Расчет цены: стоимость пути + фиксированная надбавка 40 лей
+    # Отступ должен быть ровно 4 пробела (или 1 табуляция), как и у других строк в этой функции
     price = round((dist * rate) + 40, 2)
     
-    # Если минимальная цена после надбавки должна быть больше, например, 50
-    if price < 50: price = 50.0
+    if price < 50: 
+        price = 50.0
     
     await state.update_data(price=price)
+    # ... остальной код
     
     txt = TEXTS[lang]['confirm_title'].format(
         type=data['cargo_type'], a=data['addr_a'], b=data['addr_b'], 
