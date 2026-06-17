@@ -10,6 +10,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncpg
 import aiohttp
+from aiohttp import web  # Добавь к остальным импортам вверху файла
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -524,7 +525,7 @@ async def handle_courier_stages(callback: CallbackQuery):
         await callback.answer("Заказ не найден.")
         return
 
-    # Исправленное извлечение языка клиента из БД
+    # ИСПРАВЛЕНО: Теперь язык клиента берется корректно через функцию
     client_lang = await get_lang(order['client_id'])
 
     if action == "curr_cncl":
@@ -535,6 +536,37 @@ async def handle_courier_stages(callback: CallbackQuery):
             await conn.execute("UPDATE orders SET status = 'pending', courier_id = NULL WHERE id = $1", order_id)
         await callback.message.edit_text("Вы отказались от заказа. Он возвращен в общий список.")
         await bot.send_message(order['client_id'], "⚠️ Курьер отказался от вашего заказа. Мы ищем нового курьера.")
+        
+    elif action == "ata":
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE orders SET status = 'at_a' WHERE id = $1", order_id)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"sta_atb_{order_id}")]
+        ])
+        await callback.message.edit_reply_markup(reply_markup=kb)
+        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_a'])
+        
+        task = asyncio.create_task(client_afk_worker(order['client_id'], order_id, callback.from_user.id))
+        active_afk_tasks[order_id] = task
+        
+    elif action == "atb":
+        if order_id in active_afk_tasks:
+            active_afk_tasks[order_id].cancel()
+            del active_afk_tasks[order_id]
+            
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"sta_done_{order_id}")]
+        ])
+        await callback.message.edit_reply_markup(reply_markup=kb)
+        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_b'])
+        
+    elif action == "done":
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
+        await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL добавлена в вашу историю.")
+        await bot.send_message(order['client_id'], f"🏁 Спасибо! Заказ #{order_id} завершен. Способ оплаты: Наличные ({order['price']} MDL).")
         
     elif action == "ata":
         async with db_pool.acquire() as conn:
@@ -660,11 +692,26 @@ async def adm_active(message: Message):
         txt += f"• ID: `{r['user_id']}` — @{r['username'] or 'нет юзернейма'}\n"
     await message.answer(txt, parse_mode="Markdown")
 
+
+# Отдельный хэндлер, который будет отвечать серверу Render
+async def handle_render_ping(request):
+    return web.Response(text="Bot is alive and listening!")
+
 # --- ЗАПУСК ---
 async def main():
     await init_db()
+    
+    # Встраиваем веб-сервер для прохождения Port Scan на Render
+    app = web.Application()
+    app.router.add_get("/", handle_render_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"💾 Dummy web server started on port {port}")
+    
+    # Запуск пуллинга бота
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
