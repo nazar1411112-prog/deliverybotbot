@@ -56,7 +56,7 @@ TEXTS = {
         'cargo_type': "📦 Выберите тип доставки:",
         'std': "📦 Стандарт (10 лей/км)",
         'frg': "🚚 Грузовой (20 лей/км)",
-        'addr_a': "📍 Введите адрес ТОРГОВОЙ ТОЧКИ А (или отправьте текущую геопозицию кнопкой):",
+        'addr_a': "📍 Введите адрес ТОЧКИ А (или отправьте текущую геопозицию кнопкой):",
         'addr_b': "🏁 Введите адрес НАЗНАЧЕНИЯ Б (или отправьте геопозицию):",
         'phone': "📱 Введите ваш номер телефона для связи:",
         'comment': "💬 Введите комментарий для курьера или нажмите /skip для пропуска:",
@@ -71,7 +71,7 @@ TEXTS = {
         'at_a_btn': "📍 Я на точке А",
         'at_b_btn': "🏁 Я на месте (Точка Б)",
         'done_btn': "💵 Наличные получены / Завершить",
-        'client_notif_courier_at_a': "🔔 Курьер прибыл на точку А! Пожалуйста, выходите.",
+        'client_notif_courier_at_a': "🔔 Курьер прибыл на точку А! Пожалуйста, выходите к курьеру.",
         'client_notif_courier_at_b': "🔔 Курьер на месте назначения (Точка Б)! Заберите посылку.",
         'afk_question': "📢 Вы тут? Подтвердите, что вы онлайн, нажатием на кнопку ниже. У вас 10 минут!",
         'afk_btn': "🙋‍♂️ Я тут!",
@@ -194,11 +194,10 @@ async def get_lang(user_id):
         row = await conn.fetchrow("SELECT lang FROM users WHERE user_id = $1", user_id)
         return row['lang'] if row else 'ru'
 
-# --- ИНТЕГРАЦИЯ С КАРТАМИ OSRM (ГЕОКОДИНГ И ДИСТАНЦИЯ) ---
+# --- ИНТЕГРАЦИЯ С КАРТАМИ OSRM ---
 async def geocode(address_str):
-    """Пытается превратить текстовый адрес в координаты в Молдове через OpenStreetMap Nominatim"""
     url = "https://nominatim.openstreetmap.org/search"
-    headers = {"User-Agent": "MoldovaLogisticsBot2026_Project"}
+    headers = {"User-Agent": "MoldovaLogisticsBot2026_ProjectFix"}
     params = {"q": f"{address_str}, Moldova", "format": "json", "limit": 1}
     try:
         async with aiohttp.ClientSession() as session:
@@ -208,14 +207,12 @@ async def geocode(address_str):
                     return float(res[0]['lat']), float(res[0]['lon'])
     except Exception as e:
         logging.error(f"Geocoding error: {e}")
-    # Дефолтные координаты Кишинева на случай ошибки сети, чтобы бот не падал
-    return 47.0105, 28.8638
+    return 47.0105, 28.8638 # Дефолтный Кишинев при ошибке геокодера
 
 async def get_osrm_data(lat1, lon1, lat2, lon2):
-    """Возвращает дистанцию в км и ссылку на карту"""
     map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
     osrm_api = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
-    dist_km = 5.0 # Заглушка по умолчанию
+    dist_km = 5.0
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(osrm_api, timeout=10) as resp:
@@ -261,10 +258,8 @@ async def process_role(callback: CallbackQuery, state: FSMContext):
     lang = data.get('lang', 'ru')
     
     async with db_pool.acquire() as conn:
-        # Проверка на белый список
         whitelisted = await conn.fetchrow("SELECT user_id FROM whitelist WHERE user_id = $1", callback.from_user.id)
         is_approved = True if whitelisted else False
-        
         await conn.execute("UPDATE users SET role = $1, is_approved = $2 WHERE user_id = $3", role, is_approved, callback.from_user.id)
     
     if role == "courier":
@@ -385,7 +380,7 @@ async def order_comment(message: Message, state: FSMContext):
     
     rate = 10 if data['cargo_type'] == 'standard' else 20
     price = round(dist * rate, 2)
-    if price < 30: price = 30.0 # Минимальный заказ в леях
+    if price < 30: price = 30.0 # Минимальная цена заказа в Молдове
     
     await state.update_data(price=price)
     
@@ -411,13 +406,11 @@ async def order_confirmed(callback: CallbackQuery, state: FSMContext):
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending') RETURNING id
         """, callback.from_user.id, data['cargo_type'], data['addr_a'], data['addr_b'], data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'], data['phone'], data['comment'], data['price'])
         
-        # Берем курьеров онлайн
         couriers = await conn.fetch("SELECT user_id, lang FROM users WHERE role = 'courier' AND is_online = TRUE")
         
     await callback.message.edit_text(TEXTS[lang]['order_placed'])
     await state.clear()
     
-    # Рассылка заказа всем курьерам онлайн
     dist, map_url = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
     for c in couriers:
         c_lang = c['lang']
@@ -469,13 +462,11 @@ async def take_order_callback(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[1])
     
     async with db_pool.acquire() as conn:
-        # Проверяем не взят ли уже заказ
         order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
         if not order or order['status'] != 'pending':
             await callback.answer("⚠️ Этот заказ уже принял другой курьер!", show_alert=True)
             return
             
-        # Занимаем заказ
         await conn.execute("UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2", callback.from_user.id, order_id)
         client_tg = await conn.fetchrow("SELECT username FROM users WHERE user_id = $1", order['client_id'])
         
@@ -487,11 +478,9 @@ async def take_order_callback(callback: CallbackQuery):
         [InlineKeyboardButton(text=TEXTS[lang]['cancel_btn'], callback_data=f"sta_curr_cncl_{order_id}")]
     ])
     
-    # Уведомляем курьера
     txt = TEXTS[lang]['order_taken'].format(phone=f"{order['phone']} (TG: {client_contact})", comm=order['comment'], url=map_url)
-    await callback.message.edit_text(txt, reply_markup=kb)
+    await callback.message.edit_text(txt, reply_markup=kb, disable_web_page_preview=True)
     
-    # Уведомляем клиента
     c_user = callback.from_user.username or "Курьер"
     await bot.send_message(order['client_id'], f"🤝 Ваш заказ #{order_id} принят курьером @{c_user}. Он направляется к вам на точку А.")
 
@@ -503,12 +492,10 @@ async def client_afk_worker(client_id, order_id, courier_id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[c_lang]['afk_btn'], callback_data=f"afk_ok_{order_id}")]
         ])
-        # Спрашиваем клиента
         msg = await bot.send_message(client_id, TEXTS[c_lang]['afk_question'], reply_markup=kb)
         
-        await asyncio.sleep(600) # Даем еще 10 минут на нажатие кнопки
+        await asyncio.sleep(600) # Еще 10 минут на реакцию
         
-        # Если время истекло и статус заказа всё еще 'at_a' — отменяем!
         async with db_pool.acquire() as conn:
             order = await conn.fetchrow("SELECT status FROM orders WHERE id = $1", order_id)
             if order and order['status'] == 'at_a':
@@ -516,7 +503,9 @@ async def client_afk_worker(client_id, order_id, courier_id):
                 await bot.send_message(client_id, "🔴 Заказ отменен из-за вашей неактивности.")
                 cr_lang = await get_lang(courier_id)
                 await bot.send_message(courier_id, TEXTS[cr_lang]['afk_cancelled'])
-                await bot.delete_message(client_id, msg.message_id)
+                try:
+                    await bot.delete_message(client_id, msg.message_id)
+                except Exception: pass
     except asyncio.CancelledError:
         pass
 
@@ -535,7 +524,10 @@ async def handle_courier_stages(callback: CallbackQuery):
         await callback.answer("Заказ не найден.")
         return
 
-    if action == "curr_cncl": # Отказ курьера до точки А
+    # Исправленное извлечение языка клиента из БД
+    client_lang = await get_lang(order['client_id'])
+
+    if action == "curr_cncl":
         if order['status'] != 'accepted':
             await callback.answer(TEXTS[lang]['cant_cancel'], show_alert=True)
             return
@@ -544,21 +536,19 @@ async def handle_courier_stages(callback: CallbackQuery):
         await callback.message.edit_text("Вы отказались от заказа. Он возвращен в общий список.")
         await bot.send_message(order['client_id'], "⚠️ Курьер отказался от вашего заказа. Мы ищем нового курьера.")
         
-    elif action == "ata": # Прибыл на точку А
+    elif action == "ata":
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status = 'at_a' WHERE id = $1", order_id)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"sta_atb_{order_id}")]
         ])
         await callback.message.edit_reply_markup(reply_markup=kb)
-        await bot.send_message(order['client_id'], TEXTS[TEXTS.keys()]['client_notif_courier_at_a']) # Уведомляем клиента
+        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_a'])
         
-        # Запускаем таск контроля отсутствия ответа клиента
         task = asyncio.create_task(client_afk_worker(order['client_id'], order_id, callback.from_user.id))
         active_afk_tasks[order_id] = task
         
-    elif action == "atb": # Прибыл на точку Б
-        # Отменяем афк таймер, так как курьер поехал дальше
+    elif action == "atb":
         if order_id in active_afk_tasks:
             active_afk_tasks[order_id].cancel()
             del active_afk_tasks[order_id]
@@ -569,9 +559,9 @@ async def handle_courier_stages(callback: CallbackQuery):
             [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"sta_done_{order_id}")]
         ])
         await callback.message.edit_reply_markup(reply_markup=kb)
-        await bot.send_message(order['client_id'], TEXTS[TEXTS.keys()]['client_notif_courier_at_b'])
+        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_b'])
         
-    elif action == "done": # Завершение
+    elif action == "done":
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
         await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL добавлена в вашу историю.")
@@ -580,7 +570,7 @@ async def handle_courier_stages(callback: CallbackQuery):
 # --- ОТВЕТ КЛИЕНТА НА КНОПКУ АФК ---
 @router.callback_query(F.data.startswith("afk_ok_"))
 async def client_not_afk(callback: CallbackQuery):
-    order_id = int(callback.data.split("_")[3])
+    order_id = int(callback.data.split("_")[2])
     if order_id in active_afk_tasks:
         active_afk_tasks[order_id].cancel()
         del active_afk_tasks[order_id]
