@@ -198,17 +198,19 @@ async def get_lang(user_id):
 # --- ИНТЕГРАЦИЯ С КАРТАМИ OSRM ---
 async def geocode(address_str):
     url = "https://nominatim.openstreetmap.org/search"
-    headers = {"User-Agent": "MoldovaLogisticsBot2026_ProjectFix"}
+    # Сделаем User-Agent более уникальным, чтобы снизить шанс блокировки
+    headers = {"User-Agent": f"MoldovaLogisticsBot2026_Unique_{BOT_TOKEN[:8]}"}
     params = {"q": f"{address_str}, Moldova", "format": "json", "limit": 1}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, headers=headers, timeout=10) as resp:
-                res = await resp.json()
-                if res:
-                    return float(res[0]['lat']), float(res[0]['lon'])
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res:
+                        return float(res[0]['lat']), float(res[0]['lon'])
     except Exception as e:
         logging.error(f"Geocoding error: {e}")
-    return 47.0105, 28.8638 # Дефолтный Кишинев при ошибке геокодера
+    return None, None  # Больше никакого принудительного возврата ул. Халтей
 
 async def get_osrm_data(lat1, lon1, lat2, lon2):
     map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
@@ -334,9 +336,11 @@ async def order_type_chosen(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(TEXTS[lang]['addr_a'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_a)
 
+# 2. ИСПРАВЛЕННЫЙ ХЭНДЛЕР ТОЧКИ А
 @router.message(CreateOrder.addr_a)
 async def order_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
+    
     if message.location:
         lat, lon = message.location.latitude, message.location.longitude
         addr_text = f"Координаты: {lat}, {lon}"
@@ -344,25 +348,52 @@ async def order_addr_a(message: Message, state: FSMContext):
         addr_text = message.text
         lat, lon = await geocode(addr_text)
         
+        # Если сервис карт заблокирован или адрес не найден:
+        if lat is None or lon is None:
+            await message.answer(
+                "❌ Не удалось найти этот адрес на карте.\n"
+                "Пожалуйста, напишите более детально (например: *Кишинев, Пушкина 22*) "
+                "или нажмите на кнопку ниже, чтобы отправить текущую геопозицию 👇",
+                parse_mode="Markdown"
+            )
+            return  # Останавливаем шаг и ждем повторного ввода
+        
     await state.update_data(addr_a=addr_text, lat_a=lat, lon_a=lon)
-    geo_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], resize_keyboard=True, one_time_keyboard=True)
+    
+    geo_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], 
+        resize_keyboard=True, 
+        one_time_keyboard=True
+    )
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_b)
 
+
+# 3. ИСПРАВЛЕННЫЙ ХЭНДЛЕР ТОЧКИ Б
 @router.message(CreateOrder.addr_b)
 async def order_addr_b(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
+    
     if message.location:
         lat, lon = message.location.latitude, message.location.longitude
         addr_text = f"Координаты: {lat}, {lon}"
     else:
         addr_text = message.text
         lat, lon = await geocode(addr_text)
+        
+        # Если сервис карт заблокирован или адрес не найден:
+        if lat is None or lon is None:
+            await message.answer(
+                "❌ Не удалось найти этот адрес на карте.\n"
+                "Пожалуйста, укажите город и улицу точнее (например: *Кишинев, Дечебал 12*) "
+                "или отправьте геопозицию кнопкой 👇",
+                parse_mode="Markdown"
+            )
+            return  # Останавливаем шаг и ждем повторного ввода
         
     await state.update_data(addr_b=addr_text, lat_b=lat, lon_b=lon)
     await message.answer(TEXTS[lang]['phone'], reply_markup=ReplyKeyboardRemove())
     await state.set_state(CreateOrder.phone)
-
 @router.message(CreateOrder.phone)
 async def order_phone(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
