@@ -565,8 +565,15 @@ async def client_afk_worker(client_id, order_id, courier_id):
 async def handle_courier_stages(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     parts = callback.data.split("_")
-    action = parts[1]
-    order_id = int(parts[2])
+    # Структура: sta_действие_id (или sta_группа_действие_id)
+    
+    # Исправленный парсинг для разных длин callback_data
+    if parts[1] == "curr" and parts[2] == "cncl":
+        action = "curr_cncl"
+        order_id = int(parts[3])
+    else:
+        action = parts[1]
+        order_id = int(parts[2])
     
     async with db_pool.acquire() as conn:
         order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
@@ -601,7 +608,6 @@ async def handle_courier_stages(callback: CallbackQuery):
         if order_id in active_afk_tasks:
             active_afk_tasks[order_id].cancel()
             del active_afk_tasks[order_id]
-            
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -613,8 +619,8 @@ async def handle_courier_stages(callback: CallbackQuery):
     elif action == "done":
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
-        await callback.message.edit_text(f"✅ Заказ #{order_id} успешно завершен! Сумма к получению: {order['price']} MDL.")
-        await bot.send_message(order['client_id'], "✅ Заказ завершен. Спасибо, что выбрали нас!")
+        await callback.message.edit_text(f"✅ Заказ #{order_id} успешно завершен!")
+        await bot.send_message(order['client_id'], "✅ Заказ завершен. Спасибо!")
         
     await callback.answer()
             
