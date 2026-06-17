@@ -68,7 +68,7 @@ TEXTS = {
         'phone_sender': "📱 Введите номер телефона ОТПРАВИТЕЛЯ:",
         'phone_receiver': "📱 Введите номер телефона ПОЛУЧАТЕЛЯ:",
         'comment': "💬 Введите комментарий для курьера или нажмите /skip для пропуска:",
-        'confirm_title': "📋 Подтверждение заказа:\n\n🔹 Тип: {type}\n🔹 Откуда: {a}\n🔹 Куда: {b}\n🔹 Тел. Отправителя: {p_send}\n🔹 Тел. Получателя: {p_recv}\n🔹 Комментарий: {comm}\n💵 Цена с учетом +40 MDL (Наличные): {price} MDL\n\nВсё верно?",
+        'confirm_title': "📋 Подтверждение заказа:\n\n🔹 Тип: {type}\n🔹 Откуда: {a}\n🔹 Куда: {b}\n🔹 Тел. Отправителя: {p_send}\n🔹 Тел. Получателя: {p_recv}\n🔹 Комментарий: {comm}\n💵 Итоговая стоимость: {price} MDL\n\nВсё верно?",
         'yes': "✅ Да, заказываю",
         'no': "❌ Отмена",
         'order_placed': "🚀 Заказ опубликован! Ищем ближайших курьеров...",
@@ -78,7 +78,7 @@ TEXTS = {
         'order_taken': "🤝 Вы приняли заказ! Двигайтесь на точку А.\nℹ️ Инфо:\n📞 Отправитель: {p_send}\n📞 Получатель: {p_recv}\n💬 Комм: {comm}\n🗺 Маршрут OSRM: {url}",
         'at_a_btn': "📍 Я на точке А",
         'at_b_btn': "🏁 Я на месте (Точка Б)",
-        'done_btn': "💵 Наличные получены / Завершить",
+        'done_btn': "💵 Завершить",
         'client_notif_courier_at_a': "🔔 Курьер прибыл на точку А! Пожалуйста, выходите к курьеру.",
         'client_notif_courier_at_b': "🔔 Курьер на месте назначения (Точка Б)! Заберите посылку.",
         'afk_question': "📢 Вы тут? Подтвердите, что вы онлайн, нажатием на кнопку ниже. У вас 10 минут!",
@@ -107,7 +107,7 @@ TEXTS = {
         'phone_sender': "📱 Introduceți numărul de telefon al EXPEDITORULUI:",
         'phone_receiver': "📱 Introduceți numărul de telefon al RECEPTORULUI:",
         'comment': "💬 Introduceți un comentariu pentru curier sau tastați /skip pentru a omite:",
-        'confirm_title': "📋 Confirmare comandă:\n\n🔹 Tip: {type}\n🔹 De la: {a}\n🔹 Până la: {b}\n🔹 Tel. Expeditor: {p_send}\n🔹 Tel. Receptor: {p_recv}\n🔹 Comentariu: {comm}\n💵 Preț cu +40 MDL (Cash): {price} MDL\n\nEste corect?",
+        'confirm_title': "📋 Confirmare comandă:\n\n🔹 Tip: {type}\n🔹 De la: {a}\n🔹 Până la: {b}\n🔹 Tel. Expeditor: {p_send}\n🔹 Tel. Receptor: {p_recv}\n🔹 Comentariu: {comm}\n💵 Preț total: {price} MDL\n\nEste corect?",
         'yes': "✅ Da, comand",
         'no': "❌ Anulare",
         'order_placed': "🚀 Comanda a fost publicată! Căutăm curieri...",
@@ -117,7 +117,7 @@ TEXTS = {
         'order_taken': "🤝 Ați acceptat comanda! Deplasați-vă la punctul A.\nℹ️ Info:\n📞 Expeditor: {p_send}\n📞 Receptor: {p_recv}\n💬 Comm: {comm}\n🗺 Rută OSRM: {url}",
         'at_a_btn': "📍 Sunt la punctul A",
         'at_b_btn': "🏁 Sunt la destinație (Punctul B)",
-        'done_btn': "💵 Bani primiți / Finalizează",
+        'done_btn': "💵 Finalizează",
         'client_notif_courier_at_a': "🔔 Curierul a sosit la punctul A! Vă rugăm să ieșiți.",
         'client_notif_courier_at_b': "🔔 Curierul este la destinație (Punctul B)! Ridicați coletul.",
         'afk_question': "📢 Sunteți aici? Confirmați că sunteți online apăsând butonul de mai jos. Aveți 10 minute!",
@@ -146,7 +146,7 @@ TEXTS = {
         'phone_sender': "📱 Enter SENDER'S phone number:",
         'phone_receiver': "📱 Enter RECEIVER'S phone number:",
         'comment': "💬 Enter a comment for the courier or type /skip to pass:",
-        'confirm_title': "📋 Order Confirmation:\n\n🔹 Type: {type}\n🔹 From: {a}\n🔹 To: {b}\n🔹 Sender Phone: {p_send}\n🔹 Receiver Phone: {p_recv}\n🔹 Comment: {comm}\n💵 Price with +40 MDL (Cash): {price} MDL\n\nIs everything correct?",
+        'confirm_title': "📋 Order Confirmation:\n\n🔹 Type: {type}\n🔹 From: {a}\n🔹 To: {b}\n🔹 Sender Phone: {p_send}\n🔹 Receiver Phone: {p_recv}\n🔹 Comment: {comm}\n💵 Total price: {price} MDL\n\nIs everything correct?",
         'yes': "✅ Yes, place order",
         'no': "❌ Cancel",
         'order_placed': "🚀 Order placed! Searching for couriers...",
@@ -156,7 +156,7 @@ TEXTS = {
         'order_taken': "🤝 You accepted the order! Proceed to point A.\nℹ️ Info:\n📞 Sender: {p_send}\n📞 Receiver: {p_recv}\n💬 Comment: {comm}\n🗺 OSRM Route: {url}",
         'at_a_btn': "📍 I am at point A",
         'at_b_btn': "🏁 I am at destination (Point B)",
-        'done_btn': "💵 Cash received / Complete",
+        'done_btn': "💵 Complete",
         'client_notif_courier_at_a': "🔔 The courier has arrived at point A! Please go out.",
         'client_notif_courier_at_b': "🔔 The courier is at the destination (Point B)! Collect your package.",
         'afk_question': "📢 Are you here? Confirm you are online by clicking the button below. You have 10 minutes!",
@@ -417,12 +417,16 @@ async def order_comment(message: Message, state: FSMContext):
     dist, _ = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
     
     rate = 10 if data['cargo_type'] == 'standard' else 20
-    price = round((dist * rate) + 40.0, 2)
-    if price < 40: price = 40.0
+    # ИСПРАВЛЕНО: Убрано +40.0
+    price = round(dist * rate, 2)
+    if price < 10: price = 10.0
     
     await state.update_data(price=price)
     
-    txt = f"📋 Подтверждение заказа:\n\n🔹 Тип: {data['cargo_type']}\n🔹 Откуда: {data['addr_a']}\n🔹 Куда: {data['addr_b']}\n🔹 Тел: {data['phone_sender']} / {data['phone_receiver']}\n🔹 Комм: {comm}\n💵 Итоговая стоимость: {price} MDL\n\nВсё верно?"
+    txt = TEXTS[lang]['confirm_title'].format(
+        type=data['cargo_type'], a=data['addr_a'], b=data['addr_b'], 
+        p_send=data['phone_sender'], p_recv=data['phone_receiver'], comm=comm, price=price
+    )
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=TEXTS[lang]['yes'], callback_data="confirm_order_yes")],
@@ -454,13 +458,14 @@ async def order_confirmed(callback: CallbackQuery, state: FSMContext):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[c_lang]['take_btn'].format(price=data['price']), callback_data=f"take_{order_id}")]
         ])
+        # ИСПРАВЛЕНО: Убрано (Наличные)
         c_txt = (f"📦 *Новый заказ #{order_id} ({data['cargo_type']})*\n"
                  f"📍 А: {data['addr_a']}\n"
                  f"🏁 Б: {data['addr_b']}\n"
                  f"📱 Отправитель: {data['phone_sender']}\n"
                  f"📱 Получатель: {data['phone_receiver']}\n"
                  f"💬 Комм: {data['comment']}\n"
-                 f"💵 Курьер получит: {data['price']} MDL (Наличные)\n"
+                 f"💵 Курьер получит: {data['price']} MDL\n"
                  f"🗺 Карта: [Открыть маршрут OSRM]({map_url})")
         try:
             await bot.send_message(c['user_id'], c_txt, reply_markup=kb, parse_mode="Markdown")
@@ -515,7 +520,6 @@ async def take_order_callback(callback: CallbackQuery):
         client_tg = await conn.fetchrow("SELECT username FROM users WHERE user_id = $1", order['client_id'])
             
     _, map_url = await get_osrm_data(order['lat_a'], order['lon_a'], order['lat_b'], order['lon_b'])
-    client_contact = f"@{client_tg['username']}" if client_tg and client_tg['username'] else "Скрыт"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"sta_ata_{order_id}")],
@@ -615,8 +619,8 @@ async def handle_courier_stages(callback: CallbackQuery):
     elif action == "done":
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status='completed' WHERE id=$1", order_id)
-        await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL добавлена в историю.")
-        await bot.send_message(order["client_id"], f"🏁 Спасибо! Заказ #{order_id} завершён.\nОплата наличными: {order['price']} MDL.")
+        await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL.")
+        await bot.send_message(order["client_id"], f"🏁 Спасибо! Заказ #{order_id} завершён.\nИтоговая оплата: {order['price']} MDL.")
 
     await callback.answer()
 
@@ -654,14 +658,13 @@ async def client_cancel_order(message: Message):
             except Exception: pass
     await message.answer(TEXTS[lang]['order_cancelled'])
 
-# --- АДМИНСКАЯ КОМАНДА ДЛЯ ОЧИСТКИ ЗАКАЗОВ ---
+# --- АДМИНСКАЯ КОМАНДА ---
 @router.message(Command("clear_orders"))
 async def admin_clear_orders(message: Message):
     if message.from_user.id != ADMIN_ID: return
     async with db_pool.acquire() as conn:
         result = await conn.execute("DELETE FROM orders WHERE status = 'pending'")
-    count = result.split()[-1]
-    await message.answer(f"🧹 База очищена от висящих заказов.\nУдалено записей: {count}")
+        await message.answer(f"🧹 База очищена.")
 
 @router.message(Command("stats"))
 async def admin_stats(message: Message):
@@ -671,6 +674,7 @@ async def admin_stats(message: Message):
         stats_text = "📊 Статистика заказов:\n" + "\n".join([f"{row['status']}: {row['count']}" for row in orders])
         await message.answer(stats_text)
 
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
 async def handle_ping(request):
     return web.Response(text="Bot status: Live and healthy", status=200)
 
@@ -682,21 +686,12 @@ async def start_render_port_binding():
     port = int(os.getenv("PORT", "10000")) 
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logging.info(f"[Render] Port binding server successfully active on port {port}")
+    logging.info(f"Port binding active on port {port}")
 
 async def main():
-    logging.info("Starting database tables preparation...")
     await init_db()
-    logging.info("Starting fake web-server binding...")
     await start_render_port_binding()
-    logging.info("Running long polling...")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot stopped!")
+    asyncio.run(main())
