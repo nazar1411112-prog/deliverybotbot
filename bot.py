@@ -693,15 +693,18 @@ async def start_render_port_binding():
     logging.info(f"Port binding active on port {port}")
 
 async def main():
-    # Очистка webhook перед запуском поллинга
-    await bot.delete_webhook(drop_pending_updates=True)
-await dp.start_polling(bot, drop_pending_updates=True)
-    
+    # 1. Сначала подготавливаем базу данных
     logging.info("Starting database tables preparation...")
-    # ... остальной код ...
     await init_db()
+    
+    # 2. Запускаем веб-сервер (обязательно для Render)
+    logging.info("Starting render port binding...")
     await start_render_port_binding()
-    await dp.start_polling(bot)
+    
+    # 3. Очищаем вебхуки и запускаем поллинг (самым последним!)
+    logging.info("Starting bot polling...")
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
