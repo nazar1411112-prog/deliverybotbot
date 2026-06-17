@@ -10,6 +10,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncpg
 import aiohttp
+from aiohttp import web  # Добавь web к аiohttp
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -660,9 +661,25 @@ async def admin_reset_orders(message: Message):
         
     await message.answer("🧹 *База данных очищена!* Все тестовые заказы удалены, счетчик ID сброшен.", parse_mode="Markdown")
 
+
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER И UPTIME_ROBOT ---
+async def handle_ping(request):
+    return web.Response(text="Бот активен и работает! 🚀")
+
+async def start_keep_alive():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", "8080")) # Render сам передает нужный порт
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"🌐 Keep-alive сервер запущен на порту {port}")
+
 # --- ЗАПУСК БОТА ---
 async def main():
     await init_db()
+    await start_keep_alive()  # <--- Запускаем веб-сервер для пинга
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
