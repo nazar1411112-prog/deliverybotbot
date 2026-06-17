@@ -450,14 +450,15 @@ async def list_orders(message: Message):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[lang]['take_btn'].format(price=o['price']), callback_data=f"take_{o['id']}")]
         ])
+        # Добавили строки 📱 Телефон и 💬 Комментарий прямо в общий список
         txt = (f"📦 *Заказ #{o['id']} ({o['cargo_type']})*\n"
                f"📍 А: {o['addr_a']}\n"
                f"🏁 Б: {o['addr_b']}\n"
+               f"📱 Телефон: {o['phone']}\n"
+               f"💬 Комм: {o['comment']}\n"
                f"💵 Сумма: {o['price']} MDL\n"
                f"🗺 OSRM: [Ссылка]({map_url})")
         await message.answer(txt, reply_markup=kb, parse_mode="Markdown")
-
-@router.callback_query(F.data.startswith("take_"))
 async def take_order_callback(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[1])
