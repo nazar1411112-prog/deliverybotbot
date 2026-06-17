@@ -756,11 +756,17 @@ async def admin_clear_orders(message: Message):
 async def admin_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-        
+
     async with db_pool.acquire() as conn:
-       orders = await conn.fetch("SELECT status, COUNT(*) AS count FROM orders GROUP BY status")
-        stats_text = "📊 Статистика заказов:\n" + "\n".join([f"{row['status']}: {row['count']}" for row in orders])
-        await message.answer(stats_text)
+        orders = await conn.fetch(
+            "SELECT status, COUNT(*) AS count FROM orders GROUP BY status"
+        )
+
+    stats_text = "📊 Статистика заказов:\n" + "\n".join(
+        [f"{row['status']}: {row['count']}" for row in orders]
+    )
+
+    await message.answer(stats_text)
 
 # --- ВЕБ-СЕРВЕР ДЛЯ ПРОХОЖДЕНИЯ ПРОВЕРКИ RENDER ---
 async def handle_ping(request):
