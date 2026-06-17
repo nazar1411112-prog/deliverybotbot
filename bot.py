@@ -2,15 +2,20 @@ import os
 import asyncio
 import logging
 from datetime import datetime
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.storage.memory import MemoryStorage
 import asyncpg
 import aiohttp
 from aiohttp import web
+
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+)
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.exceptions import TelegramBadRequest
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -53,7 +58,7 @@ TEXTS = {
         'approved': "🎉 Вы успешно одобрены! Наберите /online для начала работы.",
         'not_approved': "⚠️ Вы еще не одобрены админом или заблокированы.",
         'client_menu': "🏬 Вы в меню клиента.\n/order — Создать заказ\n/cancel — Отменить мой текущий заказ",
-        'courier_menu': "🛵 Вы в меню курьера.\n/online — Встать на смену\n/offline — Уйти со смены\n/orders — Список доступных заказов\n/history — История заработка",
+        'courier_menu': "🛵 Вы в меню курьера.\n/online — Встать на смену\n/offline — Уйти со смены\n/orders — Список доступных заказов",
         'cargo_type': "📦 Выберите тип доставки:",
         'std': "📦 Стандарт (10 лей/км)",
         'frg': "🚚 Грузовой (20 лей/км)",
@@ -91,7 +96,7 @@ TEXTS = {
         'approved': "🎉 Ați fost aprobat cu succes! Tastați /online pentru a începe lucrul.",
         'not_approved': "⚠️ Nu sunteți încă aprobat de admin sau sunteți blocat.",
         'client_menu': "🏬 Sunteți în meniul clientului.\n/order — Crează comandă\n/cancel — Anulează comanda curentă",
-        'courier_menu': "🛵 Sunteți în meniul curierului.\n/online — Intră pe tură\n/offline — Ieși de pe tură\n/orders — Lista comenzilor disponibile\n/history — Istoricul câștigurilor",
+        'courier_menu': "🛵 Sunteți în meniul curierului.\n/online — Intră pe tură\n/offline — Ieși de pe tură\n/orders — Lista comenzilor disponibile",
         'cargo_type': "📦 Selectați tipul de livrare:",
         'std': "📦 Standard (10 MDL/km)",
         'frg': "🚚 Marfă (20 MDL/km)",
@@ -129,7 +134,7 @@ TEXTS = {
         'approved': "🎉 You have been successfully approved! Type /online to start working.",
         'not_approved': "⚠️ You are not approved by the admin yet or are blocked.",
         'client_menu': "🏬 You are in the client menu.\n/order — Create an order\n/cancel — Cancel my current order",
-        'courier_menu': "🛵 You are in the courier menu.\n/online — Go online\n/offline — Go offline\n/orders — View available orders\n/history — Earnings history",
+        'courier_menu': "🛵 You are in the courier menu.\n/online — Go online\n/offline — Go offline\n/orders — View available orders",
         'cargo_type': "📦 Select delivery type:",
         'std': "📦 Standard (10 MDL/km)",
         'frg': "🚚 Freight (20 MDL/km)",
@@ -349,7 +354,6 @@ async def order_type_chosen(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(TEXTS[lang]['addr_a'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_a)
 
-# Хэндлер принимает ТОЛЬКО геолокацию для Точки А
 @router.message(CreateOrder.addr_a, F.location)
 async def order_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -362,7 +366,6 @@ async def order_addr_a(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_b)
 
-# Хэндлер принимает ТОЛЬКО геолокацию для Точки Б
 @router.message(CreateOrder.addr_b, F.location)
 async def order_addr_b(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -373,7 +376,6 @@ async def order_addr_b(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]['phone'], reply_markup=ReplyKeyboardRemove())
     await state.set_state(CreateOrder.phone)
 
-# Перехватчик / Заглушка, если юзер прислал текст вместо нажатия на кнопку геопозиции
 @router.message(CreateOrder.addr_a)
 @router.message(CreateOrder.addr_b)
 async def order_addr_invalid(message: Message):
@@ -397,6 +399,7 @@ async def order_comment(message: Message, state: FSMContext):
     data = await state.get_data()
     dist, map_url = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
     
+    # Исправлено: Сверка с правильными строками из callback data
     rate = 10 if data['cargo_type'] == 'standard' else 20
     price = round(dist * rate, 2)
     if price < 30: price = 30.0
@@ -445,6 +448,7 @@ async def order_confirmed(callback: CallbackQuery, state: FSMContext):
                  f"🗺 Карта: [Открыть маршрут OSRM]({map_url})")
         try:
             await bot.send_message(c['user_id'], c_txt, reply_markup=kb, parse_mode="Markdown")
+            await asyncio.sleep(0.05) # Безопасность от лимитов Telegram API
         except Exception:
             pass
 
@@ -515,8 +519,12 @@ async def client_afk_worker(client_id, order_id, courier_id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[c_lang]['afk_btn'], callback_data=f"afk_ok_{order_id}")]
         ])
-        msg = await bot.send_message(client_id, TEXTS[c_lang]['afk_question'], reply_markup=kb)
         
+        async with db_pool.acquire() as conn:
+            current_status = await conn.fetchval("SELECT status FROM orders WHERE id = $1", order_id)
+        if current_status != 'at_a': return  # Прерываем, если статус уже поменялся
+        
+        msg = await bot.send_message(client_id, TEXTS[c_lang]['afk_question'], reply_markup=kb)
         await asyncio.sleep(600)
         
         async with db_pool.acquire() as conn:
@@ -564,9 +572,11 @@ async def handle_courier_stages(callback: CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"sta_atb_{order_id}")]
         ])
-        await callback.message.edit_reply_markup(reply_markup=kb)
-        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_a'])
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb)
+        except TelegramBadRequest: pass
         
+        await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_a'])
         task = asyncio.create_task(client_afk_worker(order['client_id'], order_id, callback.from_user.id))
         active_afk_tasks[order_id] = task
         
@@ -580,7 +590,9 @@ async def handle_courier_stages(callback: CallbackQuery):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"sta_done_{order_id}")]
         ])
-        await callback.message.edit_reply_markup(reply_markup=kb)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb)
+        except TelegramBadRequest: pass
         await bot.send_message(order['client_id'], TEXTS[client_lang]['client_notif_courier_at_b'])
         
     elif action == "done":
@@ -588,6 +600,7 @@ async def handle_courier_stages(callback: CallbackQuery):
             await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
         await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL добавлена в вашу историю.")
         await bot.send_message(order['client_id'], f"🏁 Спасибо! Заказ #{order_id} завершен. Способ оплаты: Наличные ({order['price']} MDL).")
+    await callback.answer()
 
 # --- ОТВЕТ КЛИЕНТА НА КНОПКУ АФК ---
 @router.callback_query(F.data.startswith("afk_ok_"))
@@ -596,10 +609,12 @@ async def client_not_afk(callback: CallbackQuery):
     if order_id in active_afk_tasks:
         active_afk_tasks[order_id].cancel()
         del active_afk_tasks[order_id]
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception: pass
     await callback.answer("👍 Подтверждено. Вы онлайн.", show_alert=True)
 
-# --- ОТМЕНА ЗАКАЗА КЛИЕНТОМ ---
+# --- ОТМЕНА ЗАКАЗА КЛИЕНТОМ (Дописано до конца) ---
 @router.message(Command("cancel"))
 async def client_cancel_order(message: Message):
     lang = await get_lang(message.from_user.id)
@@ -621,8 +636,42 @@ async def client_cancel_order(message: Message):
         
         if order['courier_id']:
             try:
+                cr_lang = await get_lang(order['courier_id'])
                 await bot.send_message(order['courier_id'], f"🔴 Клиент отменил заказ #{order['id']}.")
-            except Exception:
-                pass
-                
+            except Exception: pass
+            
     await message.answer(TEXTS[lang]['order_cancelled'])
+
+# --- ВЕБ-СЕРВЕР ДЛЯ ПРОХОЖДЕНИЯ ПРОВЕРКИ RENDER (PORT BINDING) ---
+async def handle_ping(request):
+    return web.Response(text="Bot status: Live and healthy", status=200)
+
+async def start_render_port_binding():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", "10000")) 
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"[Render] Port binding server successfully active on port {port}")
+
+# --- ГЛАВНАЯ ТОЧКА ВХОДА ---
+async def main():
+    logging.info("Starting database tables preparation...")
+    await init_db()
+    
+    logging.info("Starting fake web-server binding...")
+    await start_render_port_binding()
+    
+    logging.info("Running long polling...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot stopped!")
