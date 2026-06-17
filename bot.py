@@ -10,7 +10,6 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncpg
 import aiohttp
-from aiohttp import web
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -57,8 +56,8 @@ TEXTS = {
         'cargo_type': "📦 Выберите тип доставки:",
         'std': "📦 Стандарт (10 лей/км)",
         'frg': "🚚 Грузовой (20 лей/км)",
-        'addr_a': "📍 Введите адрес ТОЧКИ А (или отправьте текущую геопозицию кнопкой):",
-        'addr_b': "🏁 Введите адрес НАЗНАЧЕНИЯ Б (или отправьте геопозицию):",
+        'addr_a': "📍 Введите адрес ТОЧКИ А (или отправьте геопозицию кнопкой / выберите на карте):",
+        'addr_b': "🏁 Введите адрес НАЗНАЧЕНИЯ Б (или отправьте геопозицию кнопкой / выберите на карте):",
         'phone': "📱 Введите ваш номер телефона для связи:",
         'comment': "💬 Введите комментарий для курьера или нажмите /skip для пропуска:",
         'confirm_title': "📋 Подтверждение заказа:\n\n🔹 Тип: {type}\n🔹 Откуда: {a}\n🔹 Куда: {b}\n🔹 Телефон: {phone}\n🔹 Комментарий: {comm}\n💵 Цена (Наличные): {price} MDL\n\nВсё верно?",
@@ -94,8 +93,8 @@ TEXTS = {
         'cargo_type': "📦 Selectați tipul de livrare:",
         'std': "📦 Standard (10 MDL/km)",
         'frg': "🚚 Marfă (20 MDL/km)",
-        'addr_a': "📍 Introduceți adresa PUNCTULUI A (sau trimiteți locația actuală):",
-        'addr_b': "🏁 Introduceți adresa DESTINAȚIEI B (sau trimiteți locația):",
+        'addr_a': "📍 Introduceți adresa PUNCTULUI A (sau trimiteți locația / selectați de pe hartă):",
+        'addr_b': "🏁 Introduceți adresa DESTINAȚIEI B (sau trimiteți locația / selectați de pe hartă):",
         'phone': "📱 Introduceți numărul dvs. de telefon:",
         'comment': "💬 Introduceți un comentariu pentru curier sau tastați /skip pentru a omite:",
         'confirm_title': "📋 Confirmare comandă:\n\n🔹 Tip: {type}\n🔹 De la: {a}\n🔹 Până la: {b}\n🔹 Telefon: {phone}\n🔹 Comentariu: {comm}\n💵 Preț (Cash): {price} MDL\n\nEste corect?",
@@ -114,7 +113,7 @@ TEXTS = {
         'afk_question': "📢 Sunteți aici? Confirmați că sunteți online apăsând butonul de mai jos. Aveți 10 minute!",
         'afk_btn': "🙋‍♂️ Sunt aici!",
         'afk_cancelled': "🔴 Comanda a fost anulată din cauza inactivității clientului. Curierule, poți păstra coletul!",
-        'cant_cancel': "⚠️ Comanda nu poate fi anulată după ce curierul a sosit la punctul A.",
+        'cant_cancel': "⚠️ Comanda nu poate fi canceled după ce curierul a sosit la punctul A.",
         'order_cancelled': "🗑 Comanda a fost anulată cu succes."
     },
     'en': {
@@ -131,8 +130,8 @@ TEXTS = {
         'cargo_type': "📦 Select delivery type:",
         'std': "📦 Standard (10 MDL/km)",
         'frg': "🚚 Freight (20 MDL/km)",
-        'addr_a': "📍 Enter address of POINT A (or send live location):",
-        'addr_b': "🏁 Enter address of DESTINATION B (or send live location):",
+        'addr_a': "📍 Enter address of POINT A (or send location / select from map):",
+        'addr_b': "🏁 Enter address of DESTINATION B (or send location / select from map):",
         'phone': "📱 Enter your phone number:",
         'comment': "💬 Enter a comment for the courier or type /skip to pass:",
         'confirm_title': "📋 Order Confirmation:\n\n🔹 Type: {type}\n🔹 From: {a}\n🔹 To: {b}\n🔹 Phone: {phone}\n🔹 Comment: {comm}\n💵 Price (Cash): {price} MDL\n\nIs everything correct?",
@@ -195,18 +194,18 @@ async def get_lang(user_id):
         row = await conn.fetchrow("SELECT lang FROM users WHERE user_id = $1", user_id)
         return row['lang'] if row else 'ru'
 
-# --- ИНТЕГРАЦИЯ С КАРТАМИ OSRM ---
+# --- ИНТЕГРАЦИЯ С КАРТАМИ PHOTON (Для стабильного деплоя на Render) ---
 async def geocode(address_str):
-    url = "https://nominatim.openstreetmap.org/search"
-    headers = {"User-Agent": f"MoldovaLogisticsBot2026_Unique_{BOT_TOKEN[:8]}"}
-    params = {"q": f"{address_str}, Moldova", "format": "json", "limit": 1}
+    url = "https://photon.komoot.io/api/"
+    params = {"q": f"{address_str}, Moldova", "limit": 1}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=headers, timeout=10) as resp:
+            async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if res:
-                        return float(res[0]['lat']), float(res[0]['lon'])
+                    if res and res.get("features"):
+                        coords = res["features"][0]["geometry"]["coordinates"]
+                        return float(coords[1]), float(coords[0])
     except Exception as e:
         logging.error(f"Geocoding error: {e}")
     return None, None
@@ -374,13 +373,14 @@ async def order_addr_a(message: Message, state: FSMContext):
         
         if lat is None or lon is None:
             await message.answer(
-                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, напишите более детально (например: *Кишинев, Пушкина 22*) или нажмите на кнопку ниже, чтобы отправить текущую геопозицию 👇",
+                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, напишите более детально (например: *Кишинев, Пушкина 22*) или нажмите на кнопку ниже, чтобы отправить геопозицию / выбрать на карте 👇",
                 parse_mode="Markdown"
             )
             return
         
     await state.update_data(addr_a=addr_text, lat_a=lat, lon_a=lon)
     
+    # ВОЗВРАЩЕНО: Кнопка геопозиции возвращена и для Точки Б!
     geo_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], resize_keyboard=True, one_time_keyboard=True)
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_b)
@@ -398,12 +398,13 @@ async def order_addr_b(message: Message, state: FSMContext):
         
         if lat is None or lon is None:
             await message.answer(
-                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, укажите город и улицу точнее (например: *Кишинев, Дечебал 12*) или отправьте геопозицию кнопкой 👇",
+                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, укажите город и улицу точнее (например: *Кишинев, Дечебал 12*) или нажмите кнопку геопозиции 👇",
                 parse_mode="Markdown"
             )
             return
         
     await state.update_data(addr_b=addr_text, lat_b=lat, lon_b=lon)
+    # Скрываем инлайн/реплай клавиатуру перед следующим шагом ввода номера
     await message.answer(TEXTS[lang]['phone'], reply_markup=ReplyKeyboardRemove())
     await state.set_state(CreateOrder.phone)
 
@@ -465,6 +466,8 @@ async def order_confirmed(callback: CallbackQuery, state: FSMContext):
         c_txt = (f"📦 *Новый заказ #{order_id} ({data['cargo_type']})*\n"
                  f"📍 А: {data['addr_a']}\n"
                  f"🏁 Б: {data['addr_b']}\n"
+                 f"📱 Телефон: {data['phone']}\n"
+                 f"💬 Комм: {data['comment']}\n"
                  f"💵 Курьер получит: {data['price']} MDL (Наличные)\n"
                  f"🗺 Карта: [Открыть маршрут OSRM]({map_url})")
         try:
@@ -503,7 +506,6 @@ async def list_orders(message: Message):
                f"🗺 OSRM: [Ссылка]({map_url})")
         await message.answer(txt, reply_markup=kb, parse_mode="Markdown")
 
-# ИСПРАВЛЕНО: Добавлен обязательный декоратор хэндлера кнопки принятия заказа
 @router.callback_query(F.data.startswith("take_"))
 async def take_order_callback(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
@@ -517,7 +519,7 @@ async def take_order_callback(callback: CallbackQuery):
             
         await conn.execute("UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2", callback.from_user.id, order_id)
         client_tg = await conn.fetchrow("SELECT username FROM users WHERE user_id = $1", order['client_id'])
-        
+            
     _, map_url = await get_osrm_data(order['lat_a'], order['lon_a'], order['lat_b'], order['lon_b'])
     client_contact = f"@{client_tg['username']}" if client_tg and client_tg['username'] else "Скрыт"
     
@@ -631,8 +633,9 @@ async def client_cancel_order(message: Message):
     async with db_pool.acquire() as conn:
         order = await conn.fetchrow("SELECT * FROM orders WHERE client_id = $1 AND status IN ('pending', 'accepted', 'at_a')", message.from_user.id)
         if not order:
-            await message.answer("У вас нет активных заказов для отмены.")
+            await message.answer("У вас нет активных заказов.")
             return
+            
         if order['status'] == 'at_a':
             await message.answer(TEXTS[lang]['cant_cancel'])
             return
@@ -641,75 +644,26 @@ async def client_cancel_order(message: Message):
         if order['courier_id']:
             try:
                 await bot.send_message(order['courier_id'], f"🔴 Заказ #{order['id']} был отменен клиентом.")
-            except Exception: pass
+            except Exception:
+                pass
     await message.answer(TEXTS[lang]['order_cancelled'])
-
-# --- ИСТОРИЯ ЗАРАБОТКА КУРЬЕРА (ИСПРАВЛЕНО И ДОПИСАНО) ---
-@router.message(Command("history"))
-async def courier_history(message: Message):
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT price, created_at FROM orders WHERE courier_id = $1 AND status = 'completed' ORDER BY created_at DESC", 
-            message.from_user.id
-        )
-        
-    if not rows:
-        await message.answer("📭 Ваша история поездок пуста. Выполните первый заказ, чтобы открыть баланс.")
-        return
-        
-    total_earned = sum(row['price'] for row in rows)
-    
-    txt = "📊 *Ваша история заработка:*\n\n"
-    for r in rows[:10]: # Отображаем последние 10 успешных доставок
-        date_str = r['created_at'].strftime("%d.%m.%Y %H:%M")
-        txt += f"🔹 {date_str} — *{r['price']} MDL*\n"
-        
-    txt += f"\n💰 *Всего заработано за всё время:* {total_earned} MDL"
-    await message.answer(txt, parse_mode="Markdown")
-
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ФЕЙКОВЫЙ ПОРТ ДЛЯ УСПЕШНОГО ДЕПЛОЯ) ---
-async def handle_web_request(request):
-    return web.Response(text="Bot is running completely fine!")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_web_request)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", "10000"))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logging.info(f"💾 Dummy web server started on port {port}")
-
-# --- ГЛАВНАЯ ТОЧКА ЗАПУСКА ВСЕЙ СИСТЕМЫ ---
-async def main():
-    await init_db()
-    await start_web_server()
-    
-    # Сбрасываем старые вебхуки, чтобы избежать конфликтов при перезапусках
-    await bot.delete_webhook(drop_pending_updates=True)
-    
-    logging.info("Start polling")
-    await dp.start_polling(bot)
-
 
 # --- АДМИН-КОМАНДА ДЛЯ СБРОСА ТЕСТОВЫХ ЗАКАЗОВ ---
 @router.message(Command("reset_orders"))
 async def admin_reset_orders(message: Message):
-    # Строгая проверка: если пишет не админ, бот просто игнорирует команду
     if message.from_user.id != ADMIN_ID:
         return
 
     async with db_pool.acquire() as conn:
-        # 1. Полностью очищаем таблицу заказов
         await conn.execute("DELETE FROM orders;")
-        # 2. Сбрасываем автоинкремент (счетчик ID заново с 1)
         await conn.execute("ALTER SEQUENCE orders_id_seq RESTART WITH 1;")
         
     await message.answer("🧹 *База данных очищена!* Все тестовые заказы удалены, счетчик ID сброшен.", parse_mode="Markdown")
 
+# --- ЗАПУСК БОТА ---
+async def main():
+    await init_db()
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot stopped")
+    asyncio.run(main())
