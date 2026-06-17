@@ -10,7 +10,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncpg
 import aiohttp
-from aiohttp import web  # Добавь к остальным импортам вверху файла
+from aiohttp import web
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -198,7 +198,6 @@ async def get_lang(user_id):
 # --- ИНТЕГРАЦИЯ С КАРТАМИ OSRM ---
 async def geocode(address_str):
     url = "https://nominatim.openstreetmap.org/search"
-    # Сделаем User-Agent более уникальным, чтобы снизить шанс блокировки
     headers = {"User-Agent": f"MoldovaLogisticsBot2026_Unique_{BOT_TOKEN[:8]}"}
     params = {"q": f"{address_str}, Moldova", "format": "json", "limit": 1}
     try:
@@ -210,7 +209,7 @@ async def geocode(address_str):
                         return float(res[0]['lat']), float(res[0]['lon'])
     except Exception as e:
         logging.error(f"Geocoding error: {e}")
-    return None, None  # Больше никакого принудительного возврата ул. Халтей
+    return None, None
 
 async def get_osrm_data(lat1, lon1, lat2, lon2):
     map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
@@ -296,6 +295,33 @@ async def courier_photo_reg(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]['wait_admin'])
     await state.clear()
 
+@router.callback_query(F.data.startswith("adm_"))
+async def process_admin_decision(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("У вас нет прав доступа!", show_alert=True)
+        return
+        
+    parts = callback.data.split("_")
+    action = parts[1]
+    target_user_id = int(parts[2])
+    
+    async with db_pool.acquire() as conn:
+        if action == "appr":
+            await conn.execute("UPDATE users SET is_approved = TRUE WHERE user_id = $1", target_user_id)
+            await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n✅ Одобрен администратором.")
+            try:
+                t_lang = await get_lang(target_user_id)
+                await bot.send_message(target_user_id, TEXTS[t_lang]['approved'])
+                await bot.send_message(target_user_id, TEXTS[t_lang]['courier_menu'])
+            except Exception: pass
+        elif action == "decl":
+            await conn.execute("UPDATE users SET is_approved = FALSE WHERE user_id = $1", target_user_id)
+            await callback.message.edit_caption(caption=f"{callback.message.caption}\n\n❌ Отклонён.")
+            try:
+                await bot.send_message(target_user_id, "⚠️ Ваша заявка на верификацию курьера была отклонена администратором.")
+            except Exception: pass
+    await callback.answer()
+
 # --- СМЕНЫ КУРЬЕРОВ ---
 @router.message(Command("online"))
 async def go_online(message: Message):
@@ -310,7 +336,6 @@ async def go_online(message: Message):
 
 @router.message(Command("offline"))
 async def go_offline(message: Message):
-    lang = await get_lang(message.from_user.id)
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_online = FALSE WHERE user_id = $1 AND role = 'courier'", message.from_user.id)
     await message.answer("🔴 Вы ушли со смены. Новые заказы приходить не будут.")
@@ -336,7 +361,6 @@ async def order_type_chosen(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(TEXTS[lang]['addr_a'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_a)
 
-# 2. ИСПРАВЛЕННЫЙ ХЭНДЛЕР ТОЧКИ А
 @router.message(CreateOrder.addr_a)
 async def order_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -348,28 +372,19 @@ async def order_addr_a(message: Message, state: FSMContext):
         addr_text = message.text
         lat, lon = await geocode(addr_text)
         
-        # Если сервис карт заблокирован или адрес не найден:
         if lat is None or lon is None:
             await message.answer(
-                "❌ Не удалось найти этот адрес на карте.\n"
-                "Пожалуйста, напишите более детально (например: *Кишинев, Пушкина 22*) "
-                "или нажмите на кнопку ниже, чтобы отправить текущую геопозицию 👇",
+                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, напишите более детально (например: *Кишинев, Пушкина 22*) или нажмите на кнопку ниже, чтобы отправить текущую геопозицию 👇",
                 parse_mode="Markdown"
             )
-            return  # Останавливаем шаг и ждем повторного ввода
+            return
         
     await state.update_data(addr_a=addr_text, lat_a=lat, lon_a=lon)
     
-    geo_kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], 
-        resize_keyboard=True, 
-        one_time_keyboard=True
-    )
+    geo_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], resize_keyboard=True, one_time_keyboard=True)
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_b)
 
-
-# 3. ИСПРАВЛЕННЫЙ ХЭНДЛЕР ТОЧКИ Б
 @router.message(CreateOrder.addr_b)
 async def order_addr_b(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -381,19 +396,17 @@ async def order_addr_b(message: Message, state: FSMContext):
         addr_text = message.text
         lat, lon = await geocode(addr_text)
         
-        # Если сервис карт заблокирован или адрес не найден:
         if lat is None or lon is None:
             await message.answer(
-                "❌ Не удалось найти этот адрес на карте.\n"
-                "Пожалуйста, укажите город и улицу точнее (например: *Кишинев, Дечебал 12*) "
-                "или отправьте геопозицию кнопкой 👇",
+                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, укажите город и улицу точнее (например: *Кишинев, Дечебал 12*) или отправьте геопозицию кнопкой 👇",
                 parse_mode="Markdown"
             )
-            return  # Останавливаем шаг и ждем повторного ввода
+            return
         
     await state.update_data(addr_b=addr_text, lat_b=lat, lon_b=lon)
     await message.answer(TEXTS[lang]['phone'], reply_markup=ReplyKeyboardRemove())
     await state.set_state(CreateOrder.phone)
+
 @router.message(CreateOrder.phone)
 async def order_phone(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -412,7 +425,7 @@ async def order_comment(message: Message, state: FSMContext):
     
     rate = 10 if data['cargo_type'] == 'standard' else 20
     price = round(dist * rate, 2)
-    if price < 30: price = 30.0 # Минимальная цена заказа в Молдове
+    if price < 30: price = 30.0
     
     await state.update_data(price=price)
     
@@ -481,7 +494,6 @@ async def list_orders(message: Message):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[lang]['take_btn'].format(price=o['price']), callback_data=f"take_{o['id']}")]
         ])
-        # Добавили строки 📱 Телефон и 💬 Комментарий прямо в общий список
         txt = (f"📦 *Заказ #{o['id']} ({o['cargo_type']})*\n"
                f"📍 А: {o['addr_a']}\n"
                f"🏁 Б: {o['addr_b']}\n"
@@ -490,6 +502,9 @@ async def list_orders(message: Message):
                f"💵 Сумма: {o['price']} MDL\n"
                f"🗺 OSRM: [Ссылка]({map_url})")
         await message.answer(txt, reply_markup=kb, parse_mode="Markdown")
+
+# ИСПРАВЛЕНО: Добавлен обязательный декоратор хэндлера кнопки принятия заказа
+@router.callback_query(F.data.startswith("take_"))
 async def take_order_callback(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[1])
@@ -520,14 +535,14 @@ async def take_order_callback(callback: CallbackQuery):
 # --- ТАЙМЕР АФК КЛИЕНТА (10 МИНУТ) ---
 async def client_afk_worker(client_id, order_id, courier_id):
     try:
-        await asyncio.sleep(600) # Ждем 10 минут
+        await asyncio.sleep(600)
         c_lang = await get_lang(client_id)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=TEXTS[c_lang]['afk_btn'], callback_data=f"afk_ok_{order_id}")]
         ])
         msg = await bot.send_message(client_id, TEXTS[c_lang]['afk_question'], reply_markup=kb)
         
-        await asyncio.sleep(600) # Еще 10 минут на реакцию
+        await asyncio.sleep(600)
         
         async with db_pool.acquire() as conn:
             order = await conn.fetchrow("SELECT status FROM orders WHERE id = $1", order_id)
@@ -542,7 +557,6 @@ async def client_afk_worker(client_id, order_id, courier_id):
     except asyncio.CancelledError:
         pass
 
-# --- ЭТАПЫ СТАТУСОВ КУРЬЕРА ---
 # --- ЭТАПЫ СТАТУСОВ КУРЬЕРА ---
 @router.callback_query(F.data.startswith("sta_"))
 async def handle_courier_stages(callback: CallbackQuery):
@@ -629,95 +643,56 @@ async def client_cancel_order(message: Message):
                 await bot.send_message(order['courier_id'], f"🔴 Заказ #{order['id']} был отменен клиентом.")
             except Exception: pass
     await message.answer(TEXTS[lang]['order_cancelled'])
-# --- ИСТОРИЯ ЗАРАБОТКА КУРЬЕРА ---
+
+# --- ИСТОРИЯ ЗАРАБОТКА КУРЬЕРА (ИСПРАВЛЕНО И ДОПИСАНО) ---
 @router.message(Command("history"))
 async def courier_history(message: Message):
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT id, price, created_at FROM orders WHERE courier_id = $1 AND status = 'completed'", message.from_user.id)
+        rows = await conn.fetch(
+            "SELECT price, created_at FROM orders WHERE courier_id = $1 AND status = 'completed' ORDER BY created_at DESC", 
+            message.from_user.id
+        )
+        
     if not rows:
-        await message.answer("💰 У вас пока нет выполненных заказов.")
+        await message.answer("📭 Ваша история поездок пуста. Выполните первый заказ, чтобы открыть баланс.")
         return
-    total = sum(r['price'] for r in rows)
-    txt = f"📊 *История вашего заработка:*\n\n"
-    for r in rows:
-        txt += f"🔹 Заказ #{r['id']} — {r['price']} MDL ({r['created_at'].strftime('%d.%m %H:%M')})\n"
-    txt += f"\n💵 *Всего заработано:* {total} MDL"
+        
+    total_earned = sum(row['price'] for row in rows)
+    
+    txt = "📊 *Ваша история заработка:*\n\n"
+    for r in rows[:10]: # Отображаем последние 10 успешных доставок
+        date_str = r['created_at'].strftime("%d.%m.%Y %H:%M")
+        txt += f"🔹 {date_str} — *{r['price']} MDL*\n"
+        
+    txt += f"\n💰 *Всего заработано за всё время:* {total_earned} MDL"
     await message.answer(txt, parse_mode="Markdown")
 
-# --- АДМИНИСТРАТИВНЫЕ ФУНКЦИИ ---
-@router.callback_query(F.data.startswith("adm_"))
-async def admin_decision(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID: return
-    action = callback.data.split("_")[1]
-    target_id = int(callback.data.split("_")[2])
-    
-    async with db_pool.acquire() as conn:
-        if action == "appr":
-            await conn.execute("UPDATE users SET is_approved = TRUE WHERE user_id = $1", target_id)
-            await callback.message.edit_caption(caption=callback.message.caption + "\n\n🟢 Одобрен!")
-            try:
-                await bot.send_message(target_id, "🎉 Администратор одобрил вашу заявку. Введите /online чтобы начать!")
-            except Exception: pass
-        elif action == "decl":
-            await callback.message.edit_caption(caption=callback.message.caption + "\n\n🔴 Отклонен.")
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ФЕЙКОВЫЙ ПОРТ ДЛЯ УСПЕШНОГО ДЕПЛОЯ) ---
+async def handle_web_request(request):
+    return web.Response(text="Bot is running completely fine!")
 
-@router.message(Command("whitelist"))
-async def adm_whitelist(message: Message):
-    if message.from_user.id != ADMIN_ID: return
-    try:
-        target_id = int(message.text.split()[1])
-        async with db_pool.acquire() as conn:
-            await conn.execute("INSERT INTO whitelist (user_id) VALUES ($1) ON CONFLICT DO NOTHING", target_id)
-            await conn.execute("UPDATE users SET is_approved = TRUE WHERE user_id = $1", target_id)
-        await message.answer(f"✅ Пользователь {target_id} добавлен в белый список всегда доверенных курьеров.")
-    except Exception:
-        await message.answer("Формат: `/whitelist ID_ПОЛЬЗОВАТЕЛЯ`")
-
-@router.message(Command("reset_orders"))
-async def adm_reset(message: Message):
-    if message.from_user.id != ADMIN_ID: return
-    async with db_pool.acquire() as conn:
-        await conn.execute("UPDATE orders SET status = 'cancelled' WHERE status IN ('pending', 'accepted', 'at_a', 'at_b')")
-    await message.answer("♻️ Все висящие и активные заказы принудительно сброшены (аннулированы).")
-
-@router.message(Command("active_couriers"))
-async def adm_active(message: Message):
-    if message.from_user.id != ADMIN_ID: return
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT user_id, username FROM users WHERE role = 'courier' AND is_online = TRUE")
-    if not rows:
-        await message.answer("💤 Сейчас нет курьеров на смене.")
-        return
-    txt = "🛵 *Курьеры онлайн:*\n\n"
-    for r in rows:
-        txt += f"• ID: `{r['user_id']}` — @{r['username'] or 'нет юзернейма'}\n"
-    await message.answer(txt, parse_mode="Markdown")
-
-
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ФОНОВЫЙ PING) ---
-async def handle_render_ping(request):
-    return web.Response(text="Bot is alive and listening!")
-
-# --- ЗАПУСК БОТА ---
-async def main():
-    await init_db()
-    
-    # Настройка и старт веб-сервера для прохождения Port Scan на Render
+async def start_web_server():
     app = web.Application()
-    app.router.add_get("/", handle_render_ping)
+    app.router.add_get("/", handle_web_request)
     runner = web.AppRunner(app)
     await runner.setup()
-    
-    port = int(os.getenv("PORT", 8080))
+    port = int(os.getenv("PORT", "10000"))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logging.info(f"💾 Dummy web server started on port {port}")
+
+# --- ГЛАВНАЯ ТОЧКА ЗАПУСКА ВСЕЙ СИСТЕМЫ ---
+async def main():
+    await init_db()
+    await start_web_server()
     
-    # Запуск пуллинга бота
+    # Сбрасываем старые вебхуки, чтобы избежать конфликтов при перезапусках
     await bot.delete_webhook(drop_pending_updates=True)
+    
+    logging.info("Start polling")
     await dp.start_polling(bot)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
