@@ -666,6 +666,35 @@ async def client_cancel_order(message: Message):
             
     await message.answer(TEXTS[lang]['order_cancelled'])
 
+
+
+# --- АДМИНСКАЯ КОМАНДА ДЛЯ ОЧИСТКИ ЗАКАЗОВ ---
+@router.message(Command("clear_orders"))
+async def admin_clear_orders(message: Message):
+    # Проверка, является ли пользователь администратором
+    if message.from_user.id != ADMIN_ID:
+        return # Игнорируем обычных пользователей
+
+    async with db_pool.acquire() as conn:
+        # Удаляем все заказы, которые еще не были приняты курьерами
+        result = await conn.execute("DELETE FROM orders WHERE status = 'pending'")
+        
+    # Парсим количество удаленных записей из строки ответа БД (например, "DELETE 5")
+    count = result.split()[-1]
+    
+    await message.answer(f"🧹 База очищена от висящих заказов.\nУдалено записей: {count}")
+
+# --- ФУНКЦИЯ ДЛЯ АДМИНА: ПОСМОТРЕТЬ ВСЕ АКТИВНЫЕ ЗАКАЗЫ (ОПЦИОНАЛЬНО) ---
+@router.message(Command("stats"))
+async def admin_stats(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+        
+    async with db_pool.acquire() as conn:
+        orders = await conn.fetch("SELECT status, COUNT(*) FROM orders GROUP BY status")
+        stats_text = "📊 Статистика заказов:\n" + "\n".join([f"{row['status']}: {row['count']}" for row in orders])
+        await message.answer(stats_text)
+
 # --- ВЕБ-СЕРВЕР ДЛЯ ПРОХОЖДЕНИЯ ПРОВЕРКИ RENDER ---
 async def handle_ping(request):
     return web.Response(text="Bot status: Live and healthy", status=200)
