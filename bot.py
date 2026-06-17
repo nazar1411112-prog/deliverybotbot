@@ -416,10 +416,13 @@ async def order_comment(message: Message, state: FSMContext):
     data = await state.get_data()
     dist, _ = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
     
-    rate = 10 if data['cargo_type'] == 'standard' else 20
-    # ИСПРАВЛЕНО: Убрано +40.0
-    price = round(dist * rate, 2)
-    if price < 10: price = 10.0
+rate = 10 if data['cargo_type'] == 'standard' else 20
+    
+    # Расчет цены: стоимость пути + фиксированная надбавка 40 лей
+    price = round((dist * rate) + 40, 2)
+    
+    # Если минимальная цена после надбавки должна быть больше, например, 50
+    if price < 50: price = 50.0
     
     await state.update_data(price=price)
     
