@@ -10,7 +10,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncpg
 import aiohttp
-from aiohttp import web  # Добавь web к аiohttp
+from aiohttp import web
 
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -57,8 +57,8 @@ TEXTS = {
         'cargo_type': "📦 Выберите тип доставки:",
         'std': "📦 Стандарт (10 лей/км)",
         'frg': "🚚 Грузовой (20 лей/км)",
-        'addr_a': "📍 Введите адрес ТОЧКИ А (или отправьте геопозицию кнопкой / выберите на карте):",
-        'addr_b': "🏁 Введите адрес НАЗНАЧЕНИЯ Б (или отправьте геопозицию кнопкой / выберите на карте):",
+        'addr_a': "📍 Отправьте геопозицию ТОЧКИ А (Откуда вас забрать) с помощью кнопки ниже 👇:",
+        'addr_b': "🏁 Отправьте геопозицию НАЗНАЧЕНИЯ Б (Куда везти) с помощью кнопки ниже 👇:",
         'phone': "📱 Введите ваш номер телефона для связи:",
         'comment': "💬 Введите комментарий для курьера или нажмите /skip для пропуска:",
         'confirm_title': "📋 Подтверждение заказа:\n\n🔹 Тип: {type}\n🔹 Откуда: {a}\n🔹 Куда: {b}\n🔹 Телефон: {phone}\n🔹 Комментарий: {comm}\n💵 Цена (Наличные): {price} MDL\n\nВсё верно?",
@@ -78,7 +78,8 @@ TEXTS = {
         'afk_btn': "🙋‍♂️ Я тут!",
         'afk_cancelled': "🔴 Заказ отменен из-за неактивности клиента. Курьер, вы можете оставить посылку себе!",
         'cant_cancel': "⚠️ Нельзя отменить заказ после того, как курьер прибыл на точку А.",
-        'order_cancelled': "🗑 Заказ успешно отменен."
+        'order_cancelled': "🗑 Заказ успешно отменен.",
+        'invalid_geo': "⚠️ Пожалуйста, используйте только кнопку «📍 Отправить геопозицию» ниже 👇\nРучной ввод адреса текстом отключен."
     },
     'ro': {
         'start': "🌍 Alegeți limba / Выберите язык / Choose language:",
@@ -94,8 +95,8 @@ TEXTS = {
         'cargo_type': "📦 Selectați tipul de livrare:",
         'std': "📦 Standard (10 MDL/km)",
         'frg': "🚚 Marfă (20 MDL/km)",
-        'addr_a': "📍 Introduceți adresa PUNCTULUI A (sau trimiteți locația / selectați de pe hartă):",
-        'addr_b': "🏁 Introduceți adresa DESTINAȚIEI B (sau trimiteți locația / selectați de pe hartă):",
+        'addr_a': "📍 Trimiteți locația PUNCTULUI A (De unde preluăm) folosind butonul de mai jos 👇:",
+        'addr_b': "🏁 Trimiteți locația DESTINAȚIEI B (Unde livrăm) folosind butonul de mai jos 👇:",
         'phone': "📱 Introduceți numărul dvs. de telefon:",
         'comment': "💬 Introduceți un comentariu pentru curier sau tastați /skip pentru a omite:",
         'confirm_title': "📋 Confirmare comandă:\n\n🔹 Tip: {type}\n🔹 De la: {a}\n🔹 Până la: {b}\n🔹 Telefon: {phone}\n🔹 Comentariu: {comm}\n💵 Preț (Cash): {price} MDL\n\nEste corect?",
@@ -114,8 +115,9 @@ TEXTS = {
         'afk_question': "📢 Sunteți aici? Confirmați că sunteți online apăsând butonul de mai jos. Aveți 10 minute!",
         'afk_btn': "🙋‍♂️ Sunt aici!",
         'afk_cancelled': "🔴 Comanda a fost anulată din cauza inactivității clientului. Curierule, poți păstra coletul!",
-        'cant_cancel': "⚠️ Comanda nu poate fi canceled după ce curierul a sosit la punctul A.",
-        'order_cancelled': "🗑 Comanda a fost anulată cu succes."
+        'cant_cancel': "⚠️ Comanda nu poate fi anulată după ce curierul a sosit la punctul A.",
+        'order_cancelled': "🗑 Comanda a fost anulată cu succes.",
+        'invalid_geo': "⚠️ Vă rugăm să folosiți butonul „📍 Trimiteți locația” de mai jos 👇\nIntroducerea manuală a textului este dezactivată."
     },
     'en': {
         'start': "🌍 Choose language / Выберите язык / Alegeți limba:",
@@ -131,8 +133,8 @@ TEXTS = {
         'cargo_type': "📦 Select delivery type:",
         'std': "📦 Standard (10 MDL/km)",
         'frg': "🚚 Freight (20 MDL/km)",
-        'addr_a': "📍 Enter address of POINT A (or send location / select from map):",
-        'addr_b': "🏁 Enter address of DESTINATION B (or send location / select from map):",
+        'addr_a': "📍 Send the location of POINT A (Pickup) using the button below 👇:",
+        'addr_b': "🏁 Send the location of DESTINATION B (Dropoff) using the button below 👇:",
         'phone': "📱 Enter your phone number:",
         'comment': "💬 Enter a comment for the courier or type /skip to pass:",
         'confirm_title': "📋 Order Confirmation:\n\n🔹 Type: {type}\n🔹 From: {a}\n🔹 To: {b}\n🔹 Phone: {phone}\n🔹 Comment: {comm}\n💵 Price (Cash): {price} MDL\n\nIs everything correct?",
@@ -152,7 +154,8 @@ TEXTS = {
         'afk_btn': "🙋‍♂️ I am here!",
         'afk_cancelled': "🔴 Order cancelled due to client inactivity. Courier, you may keep the parcel!",
         'cant_cancel': "⚠️ Cannot cancel order after the courier has arrived at point A.",
-        'order_cancelled': "🗑 Order successfully cancelled."
+        'order_cancelled': "🗑 Order successfully cancelled.",
+        'invalid_geo': "⚠️ Please use the '📍 Send location' button below 👇\nManual text entry is disabled."
     }
 }
 
@@ -195,22 +198,7 @@ async def get_lang(user_id):
         row = await conn.fetchrow("SELECT lang FROM users WHERE user_id = $1", user_id)
         return row['lang'] if row else 'ru'
 
-# --- ИНТЕГРАЦИЯ С КАРТАМИ PHOTON (Для стабильного деплоя на Render) ---
-async def geocode(address_str):
-    url = "https://photon.komoot.io/api/"
-    params = {"q": f"{address_str}, Moldova", "limit": 1}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10) as resp:
-                if resp.status == 200:
-                    res = await resp.json()
-                    if res and res.get("features"):
-                        coords = res["features"][0]["geometry"]["coordinates"]
-                        return float(coords[1]), float(coords[0])
-    except Exception as e:
-        logging.error(f"Geocoding error: {e}")
-    return None, None
-
+# --- РАСЧЕТ МАРШРУТА OSRM ---
 async def get_osrm_data(lat1, lon1, lat2, lon2):
     map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
     osrm_api = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
@@ -361,53 +349,37 @@ async def order_type_chosen(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(TEXTS[lang]['addr_a'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_a)
 
-@router.message(CreateOrder.addr_a)
+# Хэндлер принимает ТОЛЬКО геолокацию для Точки А
+@router.message(CreateOrder.addr_a, F.location)
 async def order_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
-    
-    if message.location:
-        lat, lon = message.location.latitude, message.location.longitude
-        addr_text = f"Координаты: {lat}, {lon}"
-    else:
-        addr_text = message.text
-        lat, lon = await geocode(addr_text)
-        
-        if lat is None or lon is None:
-            await message.answer(
-                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, напишите более детально (например: *Кишинев, Пушкина 22*) или нажмите на кнопку ниже, чтобы отправить геопозицию / выбрать на карте 👇",
-                parse_mode="Markdown"
-            )
-            return
+    lat, lon = message.location.latitude, message.location.longitude
+    addr_text = f"{lat}, {lon}"
         
     await state.update_data(addr_a=addr_text, lat_a=lat, lon_a=lon)
     
-    # ВОЗВРАЩЕНО: Кнопка геопозиции возвращена и для Точки Б!
     geo_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], resize_keyboard=True, one_time_keyboard=True)
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=geo_kb)
     await state.set_state(CreateOrder.addr_b)
 
-@router.message(CreateOrder.addr_b)
+# Хэндлер принимает ТОЛЬКО геолокацию для Точки Б
+@router.message(CreateOrder.addr_b, F.location)
 async def order_addr_b(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
-    
-    if message.location:
-        lat, lon = message.location.latitude, message.location.longitude
-        addr_text = f"Координаты: {lat}, {lon}"
-    else:
-        addr_text = message.text
-        lat, lon = await geocode(addr_text)
-        
-        if lat is None or lon is None:
-            await message.answer(
-                "❌ Не удалось найти этот адрес на карте.\nПожалуйста, укажите город и улицу точнее (например: *Кишинев, Дечебал 12*) или нажмите кнопку геопозиции 👇",
-                parse_mode="Markdown"
-            )
-            return
+    lat, lon = message.location.latitude, message.location.longitude
+    addr_text = f"{lat}, {lon}"
         
     await state.update_data(addr_b=addr_text, lat_b=lat, lon_b=lon)
-    # Скрываем инлайн/реплай клавиатуру перед следующим шагом ввода номера
     await message.answer(TEXTS[lang]['phone'], reply_markup=ReplyKeyboardRemove())
     await state.set_state(CreateOrder.phone)
+
+# Перехватчик / Заглушка, если юзер прислал текст вместо нажатия на кнопку геопозиции
+@router.message(CreateOrder.addr_a)
+@router.message(CreateOrder.addr_b)
+async def order_addr_invalid(message: Message):
+    lang = await get_lang(message.from_user.id)
+    geo_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], resize_keyboard=True, one_time_keyboard=True)
+    await message.answer(TEXTS[lang]['invalid_geo'], reply_markup=geo_kb)
 
 @router.message(CreateOrder.phone)
 async def order_phone(message: Message, state: FSMContext):
@@ -632,9 +604,13 @@ async def client_not_afk(callback: CallbackQuery):
 async def client_cancel_order(message: Message):
     lang = await get_lang(message.from_user.id)
     async with db_pool.acquire() as conn:
-        order = await conn.fetchrow("SELECT * FROM orders WHERE client_id = $1 AND status IN ('pending', 'accepted', 'at_a')", message.from_user.id)
+        order = await conn.fetchrow(
+            "SELECT id, status, courier_id FROM orders WHERE client_id = $1 AND status IN ('pending', 'accepted', 'at_a') ORDER BY id DESC LIMIT 1", 
+            message.from_user.id
+        )
+        
         if not order:
-            await message.answer("У вас нет активных заказов.")
+            await message.answer("⚠️ У вас нет активных заказов для отмены.")
             return
             
         if order['status'] == 'at_a':
@@ -642,45 +618,11 @@ async def client_cancel_order(message: Message):
             return
             
         await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", order['id'])
+        
         if order['courier_id']:
             try:
-                await bot.send_message(order['courier_id'], f"🔴 Заказ #{order['id']} был отменен клиентом.")
+                await bot.send_message(order['courier_id'], f"🔴 Клиент отменил заказ #{order['id']}.")
             except Exception:
                 pass
+                
     await message.answer(TEXTS[lang]['order_cancelled'])
-
-# --- АДМИН-КОМАНДА ДЛЯ СБРОСА ТЕСТОВЫХ ЗАКАЗОВ ---
-@router.message(Command("reset_orders"))
-async def admin_reset_orders(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    async with db_pool.acquire() as conn:
-        await conn.execute("DELETE FROM orders;")
-        await conn.execute("ALTER SEQUENCE orders_id_seq RESTART WITH 1;")
-        
-    await message.answer("🧹 *База данных очищена!* Все тестовые заказы удалены, счетчик ID сброшен.", parse_mode="Markdown")
-
-
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER И UPTIME_ROBOT ---
-async def handle_ping(request):
-    return web.Response(text="Бот активен и работает! 🚀")
-
-async def start_keep_alive():
-    app = web.Application()
-    app.router.add_get('/', handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", "8080")) # Render сам передает нужный порт
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logging.info(f"🌐 Keep-alive сервер запущен на порту {port}")
-
-# --- ЗАПУСК БОТА ---
-async def main():
-    await init_db()
-    await start_keep_alive()  # <--- Запускаем веб-сервер для пинга
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
