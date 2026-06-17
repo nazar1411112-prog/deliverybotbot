@@ -662,15 +662,15 @@ async def adm_active(message: Message):
     await message.answer(txt, parse_mode="Markdown")
 
 
-# Отдельный хэндлер, который будет отвечать серверу Render
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ФОНОВЫЙ PING) ---
 async def handle_render_ping(request):
     return web.Response(text="Bot is alive and listening!")
 
-# --- ЗАПУСК ---
+# --- ЗАПУСК БОТА ---
 async def main():
     await init_db()
     
-    # Встраиваем веб-сервер для прохождения Port Scan на Render
+    # Настройка и старт веб-сервера для прохождения Port Scan на Render
     app = web.Application()
     app.router.add_get("/", handle_render_ping)
     runner = web.AppRunner(app)
@@ -684,3 +684,9 @@ async def main():
     # Запуск пуллинга бота
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot stopped")
