@@ -565,6 +565,12 @@ async def client_afk_worker(client_id, order_id, courier_id):
 
 @router.callback_query(F.data.startswith("sta_"))
 async def handle_courier_stages(callback: CallbackQuery):
+    # Пытаемся сразу ответить Telegram, чтобы предотвратить ошибку "query is too old"
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
     lang = await get_lang(callback.from_user.id)
     parts = callback.data.split("_")
 
@@ -579,14 +585,15 @@ async def handle_courier_stages(callback: CallbackQuery):
         order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
 
     if not order:
-        await callback.answer("Заказ не найден.", show_alert=True)
+        # Здесь используем show_alert=True, так как ответ уже был отправлен выше
+        await callback.message.answer("⚠️ Заказ не найден.")
         return
 
     client_lang = await get_lang(order["client_id"])
 
     if action == "curr_cncl":
         if order["status"] != "accepted":
-            await callback.answer(TEXTS[lang]["cant_cancel"], show_alert=True)
+            await callback.message.answer(TEXTS[lang]["cant_cancel"])
             return
         async with db_pool.acquire() as conn:
             await conn.execute("UPDATE orders SET status='pending', courier_id=NULL WHERE id=$1", order_id)
@@ -621,9 +628,6 @@ async def handle_courier_stages(callback: CallbackQuery):
             await conn.execute("UPDATE orders SET status='completed' WHERE id=$1", order_id)
         await callback.message.edit_text(f"💵 Заказ #{order_id} успешно выполнен! Сумма {order['price']} MDL.")
         await bot.send_message(order["client_id"], f"🏁 Спасибо! Заказ #{order_id} завершён.\nИтоговая оплата: {order['price']} MDL.")
-
-    await callback.answer()
-
 # --- ОТВЕТ КЛИЕНТА НА КНОПКУ АФК ---
 @router.callback_query(F.data.startswith("afk_ok_"))
 async def client_not_afk(callback: CallbackQuery):
