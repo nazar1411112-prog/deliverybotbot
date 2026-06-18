@@ -320,6 +320,40 @@ async def render_admin_panel(message_or_callback):
     else:
         await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
 
+
+@router.message(Command("reset_orders"))
+async def cmd_reset_orders(message: Message, state: FSMContext):
+    admins = await get_all_admins()
+    if message.from_user.id not in admins:
+        return
+
+    # 1. Отменяем все фоновые таймеры AFK, чтобы они не стучались в пустую БД
+    for order_id, task in list(active_afk_tasks.items()):
+        task.cancel()
+        logging.info(f"Таймер AFK для заказа #{order_id} принудительно остановлен.")
+    active_afk_tasks.clear()
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            # 2. Полностью очищаем таблицу заказов и сбрасываем счетчик ID
+            await conn.execute("TRUNCATE TABLE orders RESTART IDENTITY CASCADE;")
+            
+            # 3. Возвращаем всех курьеров в оффлайн, чтобы избежать багов со сменами
+            await conn.execute("UPDATE users SET is_online = FALSE WHERE role = 'courier';")
+
+    # 4. Сбрасываем FSM-состояние самого админа, если он находился в каком-то меню
+    await state.clear()
+
+    await message.answer(
+        "🧹 **Система полностью перезапущена:**\n\n"
+        "🔹 Все заказы удалены из базы данных.\n"
+        "🔹 Счетчики ID заказов сброшены на 1.\n"
+        "🔹 Все курьеры принудительно переведены в оффлайн.\n"
+        "🔹 Все активные AFK-таймеры уничтожены.",
+        parse_mode="Markdown"
+    )
+    logging.info(f"Администратор {message.from_user.id} выполнил полную очистку заказов (/reset_orders).")
+
 @router.message(Command("admin"))
 async def cmd_admin_panel(message: Message):
     admins = await get_all_admins()
