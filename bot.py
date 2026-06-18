@@ -292,67 +292,126 @@ async def render_admin_panel(message_or_callback):
         "📊 **ЦЕНТРАЛЬНАЯ ПАНЕЛЬ АДМИНИСТРАТОРА**\n\n"
         f"👥 Всего зарегистрировано: `{total_users}`\n"
         f"📦 Активных заказов в процессе: `{active_orders}`\n\n"
-        f"🛵 **База курьеров и статус смен:**\n"
+        f"🛵 **База курьеров и управление:**\n"
     )
     
     kb_lines = []
     for c in couriers:
         status_emoji = "🟢 СМЕНА" if c['is_online'] else "🔴 ОФФ"
-        tg_user = f"@{c['username']}" if c['username'] else "Без Юзернейма"
-        text += f"{status_emoji} | ID: `{c['user_id']}` | ТГ: {tg_user} | Одобрен: {'✅' if c['is_approved'] else '❌ БАН'}\n"
+        # Защита от пустых юзернеймов (если None — пишем ID)
+        tg_user = f"@{c['username']}" if c['username'] else f"ID {c['user_id']}"
+        text += f"{status_emoji} | {tg_user} | Доступ: {'✅' if c['is_approved'] else '❌ БАН'}\n"
         
-        # Кнопки быстрых действий для каждого курьера
-        if c['is_approved']:
-            btn_text = f"🚫 Бан {tg_user} ({c['user_id']})"
-            cb_data = f"p_ban_{c['user_id']}"
-        else:
-            btn_text = f"🟢 Разбан {tg_user} ({c['user_id']})"
-            cb_data = f"p_unban_{c['user_id']}"
-        kb_lines.append([InlineKeyboardButton(text=btn_text, callback_data=cb_data)])
+        # Определяем кнопку бана/разбана
+        ban_btn_text = "🚫 Бан" if c['is_approved'] else "🟢 Разбан"
+        ban_cb_data = f"p_ban_{c['user_id']}" if c['is_approved'] else f"p_unban_{c['user_id']}"
+        
+        # Формируем горизонтальный ряд кнопок: Слева - история, Справа - бан
+        row = [
+            InlineKeyboardButton(text="📊 Фин. История", callback_data=f"p_hist_{c['user_id']}"),
+            InlineKeyboardButton(text=ban_btn_text, callback_data=ban_cb_data)
+        ]
+        kb_lines.append(row)
         
     kb_lines.append([InlineKeyboardButton(text="🔄 Обновить панель", callback_data="p_refresh")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_lines)
     
     if is_cb:
-        try:
-            await msg.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-        except TelegramBadRequest:
-            pass
+        try: await msg.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+        except TelegramBadRequest: pass
     else:
         await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 @router.message(Command("admin"))
 async def cmd_admin_panel(message: Message):
-    if message.from_user.id != ADMIN_ID: return
+    admins = await get_all_admins()
+    if message.from_user.id not in admins: return
     await render_admin_panel(message)
 
 @router.callback_query(F.data == "p_refresh")
 async def cb_refresh_panel(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID: return
+    admins = await get_all_admins()
+    if callback.from_user.id not in admins: return
     await callback.answer("Данные обновлены")
     await render_admin_panel(callback)
 
+
+@router.callback_query(F.data.startswith("p_hist_"))
+async def cb_admin_view_history(callback: CallbackQuery):
+    admins = await get_all_admins()
+    if callback.from_user.id not in admins: return
+    
+    courier_id = int(callback.data.split("_")[2])
+    
+    async with db_pool.acquire() as conn:
+        c_info = await conn.fetchrow("SELECT username FROM users WHERE user_id = $1", courier_id)
+        tg_user = f"@{c_info['username']}" if c_info and c_info['username'] else f"ID {courier_id}"
+        
+        # Считаем заработок курьера за текущий календарный месяц
+        stats = await conn.fetchrow("""
+            SELECT COALESCE(SUM(price), 0) AS total_earnings, COUNT(*) AS total_count 
+            FROM orders 
+            WHERE courier_id = $1 
+              AND status = 'completed' 
+              AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+        """, courier_id)
+        
+        # Берем последние 10 успешных заказов
+        recent_orders = await conn.fetch("""
+            SELECT id, cargo_type, price, created_at 
+            FROM orders 
+            WHERE courier_id = $1 AND status = 'completed' 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        """, courier_id)
+        
+    earnings = round(stats['total_earnings'], 2)
+    count = stats['total_count']
+    
+    text = (
+        f"📊 **ФИНАНСОВАЯ СТАТИСТИКА КУРЬЕРА {tg_user}**\n\n"
+        f"💰 Заработок в этом месяце: `{earnings} MDL`\n"
+        f"📦 Выполнено заказов: `{count}`\n\n"
+        f"📜 **Последние 10 выполненных поездок:**\n"
+    )
+    
+    if not recent_orders:
+        text += "_У этого курьера пока нет выполненных заказов в системе._"
+    else:
+        for o in recent_orders:
+            date_str = o['created_at'].strftime('%d.%m %H:%M')
+            c_type = "📦 Стандарт" if o['cargo_type'] == 'standard' else "🚚 Грузовой"
+            text += f"🔹 **Заказ #{o['id']}** | {date_str} | {c_type} | `{o['price']} MDL`\n"
+            
+    # Кнопка возврата в главное меню управления CRM панели
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад в админку", callback_data="p_refresh")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.answer()
+
 @router.callback_query(F.data.startswith("p_ban_"))
 async def cb_panel_ban(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID: return
+    admins = await get_all_admins()
+    if callback.from_user.id not in admins: return
     target_id = int(callback.data.split("_")[2])
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_approved = FALSE, is_online = FALSE WHERE user_id = $1", target_id)
     await callback.answer(f"Курьер {target_id} заблокирован", show_alert=True)
-    try:
-        await bot.send_message(target_id, "⚠️ Вы были заблокированы администратором системы.")
+    try: await bot.send_message(target_id, "⚠️ Вы были заблокированы администратором системы.")
     except Exception: pass
     await render_admin_panel(callback)
 
 @router.callback_query(F.data.startswith("p_unban_"))
 async def cb_panel_unban(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID: return
+    admins = await get_all_admins()
+    if callback.from_user.id not in admins: return
     target_id = int(callback.data.split("_")[2])
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_approved = TRUE WHERE user_id = $1", target_id)
     await callback.answer(f"Курьер {target_id} одобрен / разбанен", show_alert=True)
-    try:
-        await bot.send_message(target_id, "🎉 Администратор одобрил ваш профиль/разблокировал вас!")
+    try: await bot.send_message(target_id, "🎉 Администратор одобрил ваш профиль/разблокировал вас!")
     except Exception: pass
     await render_admin_panel(callback)
 
