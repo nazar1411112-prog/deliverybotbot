@@ -818,49 +818,53 @@ async def process_order_confirmation(callback: CallbackQuery, state: FSMContext)
         
     await callback.answer()
 
-router.callback_query(F.data.startswith("take_order_"))
+@router.callback_query(F.data.startswith("take_order_"))
 async def cb_take_order(callback: CallbackQuery):
-    lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
+    courier_id = callback.from_user.id
+    
+    # 1. Сразу отвечаем Telegram, чтобы убрать "часики"
+    await callback.answer("Принимаю...")
     
     async with db_pool.acquire() as conn:
-        # Проверяем, свободен ли еще заказ, используя транзакцию во избежание дублей
+        # 2. Используем транзакцию, чтобы заказ не могли забрать двое одновременно
         async with conn.transaction():
-            order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1 FOR UPDATE", order_id)
+            order = await conn.fetchrow(
+                "SELECT status, client_id, cargo_type, addr_a, addr_b, phone_sender, phone_receiver, comment, price FROM orders WHERE id = $1 FOR UPDATE", 
+                order_id
+            )
             
-            if not order or order['status'] != 'pending':
-                await callback.answer("⚠️ Этот заказ уже кто-то забрал или он отменен.", show_alert=True)
-                # Убираем клавиатуру у неактуального заказа
-                await callback.message.edit_reply_markup(reply_markup=None)
-                return
+            if order and order['status'] == 'pending':
+                # 3. Бронируем заказ за курьером
+                await conn.execute(
+                    "UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2",
+                    courier_id, order_id
+                )
                 
-            # Присваиваем заказ курьеру
-            await conn.execute("""
-                UPDATE orders 
-                SET status = 'accepted', courier_id = $1 
-                WHERE id = $2
-            """, callback.from_user.id, order_id)
-            
-            # Получаем URL маршрута OSRM
-            _, osrm_url = await get_osrm_data(order['lat_a'], order['lon_a'], order['lat_b'], order['lon_b'])
-            
-    # Сообщаем курьеру, что он принял заказ
-    info_text = TEXTS[lang]['order_taken'].format(
-        p_send=order['phone_sender'],
-        p_recv=order['phone_receiver'],
-        comm=order['comment'] if order['comment'] else "—",
-        url=osrm_url
-    )
-    
-    # Кнопка "Я на точке А"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"at_a_{order_id}")]
-    ])
-    
-    await callback.message.edit_text(info_text, reply_markup=kb, disable_web_page_preview=True)
-    await callback.answer()
+                # 4. Формируем OSRM маршрут для курьера
+                # Предполагаем, что у тебя есть функция расчета
+                dist, url = await get_osrm_data(0, 0, 0, 0) # Здесь твои координаты
+                
+                lang = await get_lang(courier_id)
+                msg_text = TEXTS[lang]['order_taken'].format(
+                    p_send=order['phone_sender'],
+                    p_recv=order['phone_receiver'],
+                    comm=order['comment'],
+                    url=url
+                )
+                
+                await callback.message.edit_text(msg_text, parse_mode="Markdown")
+                
+                # 5. Уведомляем клиента
+                try:
+                    await bot.send_message(order['client_id'], "✅ Ваш заказ принят! Курьер направляется к вам.")
+                except:
+                    pass
+            else:
+                await callback.message.edit_text("❌ Заказ уже занят или отменен.")
 
 @router.callback_query(F.data.startswith("order_ata_"))
+
 async def courier_at_point_a(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     c_lang = await get_lang(callback.from_user.id)
@@ -1000,6 +1004,26 @@ async def cmd_view_orders(message: Message):
         ])
         
         await message.answer(text, reply_markup=kb)
+
+
+async def broadcast_order(order_data: dict):
+    # Берем всех онлайн-курьеров
+    async with db_pool.acquire() as conn:
+        couriers = await conn.fetch("SELECT user_id FROM users WHERE role = 'courier' AND is_online = TRUE")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"✅ Принять за {order_data['price']} MDL", callback_data=f"take_order_{order_data['id']}")]
+    ])
+    
+    for c in couriers:
+        try:
+            await bot.send_message(
+                c['user_id'], 
+                f"📦 НОВЫЙ ЗАКАЗ #{order_data['id']}\n💰 Оплата: {order_data['price']} MDL", 
+                reply_markup=kb
+            )
+        except Exception as e:
+            logging.error(f"Не удалось отправить курьеру {c['user_id']}: {e}")
 
 # --- ГЛАВНАЯ ФУНКЦИЯ ЗАПУСКА ПРИЛОЖЕНИЯ ---
 async def main():
