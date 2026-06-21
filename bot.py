@@ -189,6 +189,7 @@ async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL)
     async with db_pool.acquire() as conn:
+        # Таблицы для БОТА ДОСТАВКИ
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -959,30 +960,50 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
-
-# --- ЗАПУСК ОДНОВРЕМЕННО С HTTP СЕРВЕРОМ НА RENDER ---
-async def main():
-    # Инициализация пула БД Postgres и структуры таблиц
-    await init_db()
+async def broadcast_to_couriers(order_id, data):
+    async with db_pool.acquire() as conn:
+        couriers = await conn.fetch("SELECT user_id FROM users WHERE role = 'courier' AND is_online = TRUE")
     
-    # Поднимаем aiohttp веб-сервер для прохождения проверок Render Free Web Service (Keep-Alive)
+    for c in couriers:
+        try:
+            lang = await get_lang(c['user_id'])
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=TEXTS[lang]['take_btn'].format(price=data['price']), callback_data=f"take_{order_id}")]
+            ])
+            await bot.send_message(
+                c['user_id'], 
+                # Вместо просто cargo_type, сделай красивый текст для курьера:
+if data['cargo_type'] == 'flowers':
+    order_text = f"🌸 **Новый заказ из Цветочного магазина!**\n💬 {data['comment']}\n💵 Цена: {data['price']} MDL"
+else:
+    order_text = f"📦 **Новый заказ!**\n📦 Тип: {data['cargo_type']}\n💵 Цена: {data['price']} MDL"
+
+# И отправляй этот order_text курьерам.
+            )
+        except Exception as e:
+            logging.error(f"Failed to notify courier {c['user_id']}: {e}")
+
+
+async def handle_ping(request):
+    return web.Response(text="Delivery Bot Active", status=200)
+
+async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
-    
-    asyncio.create_task(site.start())
-    logging.info(f"🚀 HTTP-сервер для Render запущен на порту: {PORT}")
-    
-    try:
-        logging.info("🤖 Запуск сессии Long Polling бота...")
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
-        if db_pool:
-            await db_pool.close()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
 
+# ... (Здесь вставляйте логику доставки из вашего предыдущего кода) ...
+
+async def main():
+    # Инициализация БД
+    global db_pool
+    db_pool = await asyncpg.create_pool(DATABASE_URL)
+    
+    await start_web_server()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
