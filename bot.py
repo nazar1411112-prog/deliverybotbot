@@ -967,23 +967,26 @@ async def broadcast_to_couriers(order_id, data):
     for c in couriers:
         try:
             lang = await get_lang(c['user_id'])
+            
+            # 1. Сначала определяем текст заказа
+            if data['cargo_type'] == 'flowers':
+                order_text = f"🌸 **Новый заказ из Цветочного магазина!**\n💬 {data['comment']}\n💵 Цена: {data['price']} MDL"
+            else:
+                order_text = f"📦 **Новый заказ!**\n📦 Тип: {data['cargo_type']}\n💵 Цена: {data['price']} MDL"
+            
+            # 2. Создаем клавиатуру
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=TEXTS[lang]['take_btn'].format(price=data['price']), callback_data=f"take_{order_id}")]
+                [InlineKeyboardButton(
+                    text=TEXTS[lang]['take_btn'].format(price=data['price']), 
+                    callback_data=f"take_{order_id}"
+                )]
             ])
-             await bot.send_message(c['user_id'], order_text)
-                if data['cargo_type'] == 'flowers':
-        order_text = f"🌸 **Новый заказ из Цветочного магазина!**\n💬 {data['comment']}\n💵 Цена: {data['price']} MDL"
-    else:
-        order_text = f"📦 **Новый заказ!**\n📦 Тип: {data['cargo_type']}\n💵 Цена: {data['price']} MDL"
-    
-    # Дальше отправка сообщения
-   
-# И отправляй этот order_text курьерам.
-            )
+            
+            # 3. Отправляем сообщение
+            await bot.send_message(c['user_id'], order_text, reply_markup=kb)
+                
         except Exception as e:
             logging.error(f"Failed to notify courier {c['user_id']}: {e}")
-
-
 async def handle_ping(request):
     return web.Response(text="Delivery Bot Active", status=200)
 
