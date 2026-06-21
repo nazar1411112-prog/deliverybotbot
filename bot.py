@@ -656,15 +656,13 @@ async def process_comment(message: Message, state: FSMContext):
         price=price
     )
     
-   # --- ПРОДОЛЖЕНИЕ МЕНЮ КЛИЕНТА (ОБРАБОТКА ПОДТВЕРЖДЕНИЯ ЗАКАЗА) ---
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=TEXTS[lang]['yes'], callback_data="order_confirm_yes")],
-            [InlineKeyboardButton(text=TEXTS[lang]['no'], callback_data="order_confirm_no")]
-        ])
-        
-        await message.answer(text, reply_markup=kb, parse_mode="Markdown")
-        await state.set_state(CreateOrder.confirm)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=TEXTS[lang]['yes'], callback_data="order_confirm_yes")],
+        [InlineKeyboardButton(text=TEXTS[lang]['no'], callback_data="order_confirm_no")]
+    ])
+    
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+    await state.set_state(CreateOrder.confirm)
 
 
 @router.callback_query(CreateOrder.confirm, F.data == "order_confirm_yes")
@@ -673,7 +671,6 @@ async def process_order_confirm_yes(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     
     async with db_pool.acquire() as conn:
-        # Сохраняем заказ в базу данных со статусом 'pending'
         order_id = await conn.fetchval("""
             INSERT INTO orders (
                 client_id, cargo_type, addr_a, addr_b, lat_a, lon_a, lat_b, lon_b, 
@@ -685,7 +682,6 @@ async def process_order_confirm_yes(callback: CallbackQuery, state: FSMContext):
         data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'],
         data['phone_sender'], data['phone_receiver'], data['comment'], data['price'])
         
-        # Получаем всех курьеров, которые сейчас на смене и одобрены
         online_couriers = await conn.fetch(
             "SELECT user_id, lang FROM users WHERE role = 'courier' AND is_online = TRUE AND is_approved = TRUE"
         )
@@ -693,7 +689,6 @@ async def process_order_confirm_yes(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(TEXTS[lang]['order_placed'])
     await state.clear()
     
-    # Рассылка уведомлений доступным курьерам
     c_type_str = "📦 Стандарт" if data['cargo_type'] == 'standard' else "🚚 Грузовой"
     for courier in online_couriers:
         c_lang = courier['lang']
