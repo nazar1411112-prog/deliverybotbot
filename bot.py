@@ -960,52 +960,87 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
-async def broadcast_to_couriers(order_id, data):
-    async with db_pool.acquire() as conn:
-        couriers = await conn.fetch("SELECT user_id FROM users WHERE role = 'courier' AND is_online = TRUE")
+# --- ЗАВЕРШЕНИЕ: Подтверждение заказа ---
+@router.callback_query(CreateOrder.confirm, F.data == "confirm_order")
+async def cb_confirm_order(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    lang = await get_lang(callback.from_user.id)
     
-    for c in couriers:
-        try:
-            lang = await get_lang(c['user_id'])
-            
-            # 1. Сначала определяем текст заказа
-            if data['cargo_type'] == 'flowers':
-                order_text = f"🌸 **Новый заказ из Цветочного магазина!**\n💬 {data['comment']}\n💵 Цена: {data['price']} MDL"
-            else:
-                order_text = f"📦 **Новый заказ!**\n📦 Тип: {data['cargo_type']}\n💵 Цена: {data['price']} MDL"
-            
-            # 2. Создаем клавиатуру
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text=TEXTS[lang]['take_btn'].format(price=data['price']), 
-                    callback_data=f"take_{order_id}"
-                )]
-            ])
-            
-            # 3. Отправляем сообщение
-            await bot.send_message(c['user_id'], order_text, reply_markup=kb)
-                
-        except Exception as e:
-            logging.error(f"Failed to notify courier {c['user_id']}: {e}")
-async def handle_ping(request):
-    return web.Response(text="Delivery Bot Active", status=200)
+    # Сохранение в БД
+    async with db_pool.acquire() as conn:
+        res = await conn.execute("""
+            INSERT INTO orders (client_id, cargo_type, addr_a, addr_b, phone_sender, phone_receiver, comment, price, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+            RETURNING id
+        """, callback.from_user.id, data['cargo_type'], str(data['lat_a'])+','+str(data['lon_a']), 
+             str(data['lat_b'])+','+str(data['lon_b']), data['phone_sender'], data['phone_receiver'], 
+             data['comment'], data['price'])
+        
+        order_id = res  # В зависимости от драйвера может вернуть id или строку
+        # Если нужно получить ID вставленной записи:
+        order_row = await conn.fetchrow("SELECT id FROM orders WHERE client_id = $1 ORDER BY id DESC LIMIT 1", callback.from_user.id)
+        order_id = order_row['id']
 
-async def start_web_server():
+    await callback.message.edit_text(TEXTS[lang]['order_placed'])
+    await state.clear()
+    
+    # Рассылка курьерам
+    await broadcast_new_order(order_id, data)
+
+# --- Логика оповещения курьеров ---
+async def broadcast_new_order(order_id, data):
+    async with db_pool.acquire() as conn:
+        online_couriers = await conn.fetch("SELECT user_id FROM users WHERE role = 'courier' AND is_online = TRUE")
+    
+    for courier in online_couriers:
+        c_id = courier['user_id']
+        try:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"✅ Принять заказ за {data['price']} MDL", callback_data=f"take_ord_{order_id}")]
+            ])
+            await bot.send_message(
+                c_id, 
+                f"🔔 **Новый заказ #{order_id}**\nТип: {data['cargo_type']}\nЦена: {data['price']} MDL\nКомментарий: {data['comment']}",
+                reply_markup=kb
+            )
+        except Exception as e:
+            logging.error(f"Не удалось отправить заказ курьеру {c_id}: {e}")
+
+# --- Обработка принятия заказа курьером ---
+@router.callback_query(F.data.startswith("take_ord_"))
+async def cb_take_order(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    courier_id = callback.from_user.id
+    
+    async with db_pool.acquire() as conn:
+        # Проверяем, свободен ли еще заказ
+        order = await conn.fetchrow("SELECT status, client_id, phone_sender, phone_receiver, comment FROM orders WHERE id = $1", order_id)
+        
+        if order['status'] != 'pending':
+            return await callback.answer("❌ Заказ уже принят другим курьером!", show_alert=True)
+        
+        # Обновляем статус
+        await conn.execute("UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2", courier_id, order_id)
+        
+    await callback.answer("✅ Вы приняли заказ!")
+    await callback.message.edit_text(f"🤝 Вы приняли заказ #{order_id}. Двигайтесь на точку А.")
+    
+    # Уведомляем клиента
+    await bot.send_message(order['client_id'], f"🚀 Курьер принял ваш заказ #{order_id}!")
+
+# --- СТАРТ СЕРВЕРА ---
+async def main():
+    await init_db()
+    
+    # Запуск веб-сервера
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
-
-# ... (Здесь вставляйте логику доставки из вашего предыдущего кода) ...
-
-async def main():
-    # Инициализация БД
-    global db_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
     
-    await start_web_server()
+    logging.info("Бот запущен и веб-сервер работает.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
