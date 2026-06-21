@@ -970,14 +970,14 @@ async def broadcast_to_couriers(order_id, data):
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=TEXTS[lang]['take_btn'].format(price=data['price']), callback_data=f"take_{order_id}")]
             ])
-            await bot.send_message(
-                c['user_id'], 
-                # Вместо просто cargo_type, сделай красивый текст для курьера:
-if data['cargo_type'] == 'flowers':
-    order_text = f"🌸 **Новый заказ из Цветочного магазина!**\n💬 {data['comment']}\n💵 Цена: {data['price']} MDL"
-else:
-    order_text = f"📦 **Новый заказ!**\n📦 Тип: {data['cargo_type']}\n💵 Цена: {data['price']} MDL"
-
+             await bot.send_message(c['user_id'], order_text)
+                if data['cargo_type'] == 'flowers':
+        order_text = f"🌸 **Новый заказ из Цветочного магазина!**\n💬 {data['comment']}\n💵 Цена: {data['price']} MDL"
+    else:
+        order_text = f"📦 **Новый заказ!**\n📦 Тип: {data['cargo_type']}\n💵 Цена: {data['price']} MDL"
+    
+    # Дальше отправка сообщения
+   
 # И отправляй этот order_text курьерам.
             )
         except Exception as e:
