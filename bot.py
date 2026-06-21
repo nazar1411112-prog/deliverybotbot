@@ -726,170 +726,229 @@ async def go_online(message: Message):
         if user and user['role'] == 'courier' and user['is_approved']:
             await conn.execute("UPDATE users SET is_online = TRUE WHERE user_id = $1", message.from_user.id)
             await message.answer("🟢 Вы вышли на онлайн-смену! Ожидайте новые заказы.")
-        else:
-            await message.answer(TEXTS[lang]['not_approved'])
+        else:llback_data="confirm_yes")],
+        [InlineKeyboardButton(text=TEXTS[lang]['no'], callback_data="confirm_no")]
+    ])
+    
+    await message.answer(text, reply_markup=kb)
+    await state.set_state(CreateOrder.confirm)
 
-@router.message(Command("offline"))
-async def go_offline(message: Message):
-    async with db_pool.acquire() as conn:
-        await conn.execute("UPDATE users SET is_online = FALSE WHERE user_id = $1 AND role = 'courier'", message.from_user.id)
-    await message.answer("🔴 Вы ушли со смены. Новые заказы приходить не будут.")
-
-@router.callback_query(F.data.startswith("take_"))
-async def courier_take_order(callback: CallbackQuery):
+@router.callback_query(CreateOrder.confirm, F.data == "confirm_yes")
+async def process_confirm_yes(callback: CallbackQuery, state: FSMContext):
     lang = await get_lang(callback.from_user.id)
-    order_id = int(callback.data.split("_")[1])
+    data = await state.get_data()
     
     async with db_pool.acquire() as conn:
-        # Пытаемся захватить заказ
-        res = await conn.execute("UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2 AND status = 'pending'", callback.from_user.id, order_id)
-        if res == "UPDATE 0":
-            await callback.answer("Этот заказ уже забрали или он отменен!", show_alert=True)
+        # Добавляем заказ в БД
+        order_id = await conn.fetchval('''
+            INSERT INTO orders (client_id, cargo_type, lat_a, lon_a, lat_b, lon_b, phone_sender, phone_receiver, comment, price, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
+            RETURNING id
+        ''', callback.from_user.id, data['cargo_type'], data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'], 
+             data['phone_sender'], data['phone_receiver'], data['comment'], data['price'])
+        
+        # Получаем онлайн курьеров
+        couriers = await conn.fetch("SELECT user_id, lang FROM users WHERE role = 'courier' AND is_online = TRUE AND is_approved = TRUE")
+
+    await callback.message.edit_text(TEXTS[lang]['order_placed'])
+    await state.clear()
+    
+    # Рассылаем заказ курьерам
+    for c in couriers:
+        c_lang = c['lang']
+        c_type_str = "📦 Стандарт" if data['cargo_type'] == 'standard' else "🚚 Грузовой"
+        
+        text = (
+            f"🔔 **Новый заказ #{order_id}**\n\n"
+            f"🔹 Тип: {c_type_str}\n"
+            f"💵 Стоимость: `{data['price']} MDL`\n"
+            f"🗺 [Маршрут OSRM (нажмите)]({data['map_url']})\n\n"
+            f"Быстрее принимайте!"
+        )
+        
+        take_btn_text = TEXTS[c_lang]['take_btn'].format(price=data['price'])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=take_btn_text, callback_data=f"take_order_{order_id}")]
+        ])
+        
+        try:
+            await bot.send_message(c['user_id'], text, reply_markup=kb, parse_mode="Markdown", disable_web_page_preview=True)
+        except Exception as e:
+            logging.error(f"Не удалось отправить уведомление курьеру {c['user_id']}: {e}")
+
+@router.callback_query(CreateOrder.confirm, F.data == "confirm_no")
+async def process_confirm_no(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
+    await callback.message.edit_text(TEXTS[lang]['order_cancelled'])
+    await state.clear()
+
+@router.message(Command("cancel"))
+async def cmd_cancel_client(message: Message):
+    lang = await get_lang(message.from_user.id)
+    async with db_pool.acquire() as conn:
+        order = await conn.fetchrow("SELECT id, status FROM orders WHERE client_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1", message.from_user.id)
+        if not order:
+            await message.answer(TEXTS[lang]['cant_cancel'])
+            return
+        
+        await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", order['id'])
+        
+    await message.answer(TEXTS[lang]['order_cancelled'])
+
+
+# --- ЛОГИКА КУРЬЕРОВ (РАБОТА С ЗАКАЗАМИ) ---
+@router.message(Command("online"))
+async def cmd_online(message: Message):
+    lang = await get_lang(message.from_user.id)
+    async with db_pool.acquire() as conn:
+        user = await conn.fetchrow("SELECT is_approved FROM users WHERE user_id = $1 AND role = 'courier'", message.from_user.id)
+        if not user or not user['is_approved']:
+            await message.answer(TEXTS[lang]['not_approved'])
+            return
+            
+        await conn.execute("UPDATE users SET is_online = TRUE WHERE user_id = $1", message.from_user.id)
+    await message.answer("🟢 Вы вышли на смену. Теперь вы будете получать новые заказы.")
+
+@router.message(Command("offline"))
+async def cmd_offline(message: Message):
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE users SET is_online = FALSE WHERE user_id = $1", message.from_user.id)
+    await message.answer("🔴 Вы ушли со смены. Заказы временно не будут вам поступать.")
+
+@router.callback_query(F.data.startswith("take_order_"))
+async def process_take_order(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
+    order_id = int(callback.data.split("_")[2])
+    
+    async with db_pool.acquire() as conn:
+        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
+        
+        if not order or order['status'] != 'pending':
+            await callback.answer("⚠️ Этот заказ уже кто-то забрал или он отменен.", show_alert=True)
             await callback.message.delete()
             return
             
-        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
+        # Назначаем курьера
+        await conn.execute("UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2", callback.from_user.id, order_id)
         
     _, map_url = await get_osrm_data(order['lat_a'], order['lon_a'], order['lat_b'], order['lon_b'])
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"ata_{order_id}")]])
-    text = TEXTS[lang]['order_taken'].format(p_send=order['phone_sender'], p_recv=order['phone_receiver'], comm=order['comment'], url=map_url)
+    # Формируем сообщение курьеру
+    courier_text = TEXTS[lang]['order_taken'].format(
+        p_send=order['phone_sender'],
+        p_recv=order['phone_receiver'],
+        comm=order['comment'],
+        url=map_url
+    )
     
-    await callback.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"at_a_{order_id}")]
+    ])
+    
+    await callback.message.edit_text(courier_text, reply_markup=kb, disable_web_page_preview=True)
+    await callback.answer()
+    
+    # Уведомляем клиента
+    client_lang = await get_lang(order['client_id'])
+    try:
+        await bot.send_message(order['client_id'], f"🚗 Курьер выехал! Ваш заказ #{order_id} в работе.")
+    except Exception:
+        pass
 
-@router.callback_query(F.data.startswith("ata_"))
-async def courier_at_a(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("at_a_"))
+async def process_at_a(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
-    order_id = int(callback.data.split("_")[1])
+    order_id = int(callback.data.split("_")[2])
     
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE orders SET status = 'at_a' WHERE id = $1", order_id)
-        order = await conn.fetchrow("SELECT client_id FROM orders WHERE id = $1", order_id)
+        client_id = await conn.fetchval("SELECT client_id FROM orders WHERE id = $1", order_id)
         
-    # Уведомление клиенту
-    c_lang = await get_lang(order['client_id'])
-    try: await bot.send_message(order['client_id'], TEXTS[c_lang]['client_notif_courier_at_a'])
-    except: pass
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"atb_{order_id}")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"at_b_{order_id}")]
+    ])
     await callback.message.edit_reply_markup(reply_markup=kb)
+    
+    # Уведомляем клиента
+    client_lang = await get_lang(client_id)
+    try:
+        await bot.send_message(client_id, TEXTS[client_lang]['client_notif_courier_at_a'])
+    except Exception:
+        pass
 
-@router.callback_query(F.data.startswith("atb_"))
-async def courier_at_b(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("at_b_"))
+async def process_at_b(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
-    order_id = int(callback.data.split("_")[1])
+    order_id = int(callback.data.split("_")[2])
     
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
-        order = await conn.fetchrow("SELECT client_id FROM orders WHERE id = $1", order_id)
+        client_id = await conn.fetchval("SELECT client_id FROM orders WHERE id = $1", order_id)
         
-    c_lang = await get_lang(order['client_id'])
-    try: await bot.send_message(order['client_id'], TEXTS[c_lang]['client_notif_courier_at_b'])
-    except: pass
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"done_{order_id}")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"done_{order_id}")]
+    ])
     await callback.message.edit_reply_markup(reply_markup=kb)
+    
+    # Уведомляем клиента
+    client_lang = await get_lang(client_id)
+    try:
+        await bot.send_message(client_id, TEXTS[client_lang]['client_notif_courier_at_b'])
+    except Exception:
+        pass
 
 @router.callback_query(F.data.startswith("done_"))
-async def courier_done(callback: CallbackQuery):
+async def process_done(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[1])
+    
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE orders SET status = 'completed' WHERE id = $1", order_id)
-    await callback.message.edit_text("✅ Заказ успешно завершён! Деньги учтены в /history.")
-
-# --- ОСТАЛЬНЫЕ ФУНКЦИИ (ИСТОРИЯ, АДМИНКА, ПОДДЕРЖКА) ---
-# Блок кода для /history, /admin, render_admin_panel, /support, /reset_orders 
-# остается таким же, каким вы его прислали в вашем изначальном промпте.
-# Для краткости вывода здесь я включил полные рабочие функции выше.
-
-@router.message(Command("history"))
-async def cmd_courier_history(message: Message):
-    lang = await get_lang(message.from_user.id)
-    async with db_pool.acquire() as conn:
-        user = await conn.fetchrow("SELECT role, is_approved FROM users WHERE user_id = $1", message.from_user.id)
-        if not user or user['role'] != 'courier' or not user['is_approved']:
-            await message.answer(TEXTS[lang]['not_approved'])
-            return
+        client_id, price = await conn.fetchrow("SELECT client_id, price FROM orders WHERE id = $1", order_id)
         
-        stats = await conn.fetchrow("""
-            SELECT COALESCE(SUM(price), 0) AS total_earnings, COUNT(*) AS total_count 
-            FROM orders 
-            WHERE courier_id = $1 AND status = 'completed' AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)
-        """, message.from_user.id)
-        
-        recent_orders = await conn.fetch("""
-            SELECT id, cargo_type, price, created_at FROM orders 
-            WHERE courier_id = $1 AND status = 'completed' ORDER BY created_at DESC LIMIT 10
-        """, message.from_user.id)
-        
-    earnings = round(float(stats['total_earnings']), 2)
-    count = stats['total_count']
-    text = TEXTS[lang]['history_title'].format(earnings=f"{earnings:.2f}", count=count)
+    await callback.message.edit_text(f"✅ Заказ #{order_id} успешно завершен!\n💵 Получено: `{price} MDL`", parse_mode="Markdown")
     
-    if not recent_orders: text += f"_{TEXTS[lang]['history_empty']}_"
-    else:
-        for o in recent_orders:
-            date_str = o['created_at'].strftime('%d.%m %H:%M')
-            c_type = "📦" if o['cargo_type'] == 'standard' else "🚚"
-            o_price = round(float(o['price']), 2)
-            text += f"🔹 **#{o['id']}** | {date_str} | {c_type} | `{o_price:.2f} MDL`\n"
-            
-    await message.answer(text, parse_mode="Markdown")
-
-@router.message(Command("support"))
-async def cmd_support(message: Message, state: FSMContext):
-    lang = await get_lang(message.from_user.id)
-    await message.answer(TEXTS[lang]['support_req'])
-    await state.set_state(SupportStates.waiting_for_text)
-
-@router.message(SupportStates.waiting_for_text)
-async def process_support_message(message: Message, state: FSMContext):
-    lang = await get_lang(message.from_user.id)
-    tg_user = f"@{message.from_user.username}" if message.from_user.username else "Нет юзернейма"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✉️ Ответить клиенту", callback_data=f"ticket_reply_{message.from_user.id}")]])
-    
-    admin_text = (
-        f"📩 **НОВОЕ ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ!**\n\n"
-        f"👤 Отправитель: {message.from_user.full_name}\n"
-        f"🆔 ID: `{message.from_user.id}`\n"
-        f"📱 TG: {tg_user}\n\n💬 **Текст:**\n{message.text}"
-    )
-    await bot.send_message(ADMIN_ID, admin_text, reply_markup=kb, parse_mode="Markdown")
-    await message.answer(TEXTS[lang]['support_sent'])
-    await state.clear()
-
-@router.callback_query(F.data.startswith("ticket_reply_"))
-async def cb_start_ticket_reply(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID: return
-    target_user_id = int(callback.data.split("_")[2])
-    await state.update_data(reply_target_id=target_user_id)
-    await callback.message.answer(f"✍️ Введите текст ответа для `{target_user_id}`:")
-    await state.set_state(AdminReplyStates.waiting_for_reply)
-
-@router.message(AdminReplyStates.waiting_for_reply)
-async def process_admin_reply_send(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID: return
-    data = await state.get_data()
-    target_id = data.get("reply_target_id")
-    if not target_id:
-        await state.clear()
-        return
-        
-    target_lang = await get_lang(target_id)
-    full_reply = f"{TEXTS[target_lang]['support_reply_header']}{message.text}"
     try:
-        await bot.send_message(target_id, full_reply, parse_mode="Markdown")
-        await message.answer(f"✅ Ответ успешно перенаправлен пользователю `{target_id}`.")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-    await state.clear()
+        await bot.send_message(client_id, f"✅ Ваш заказ #{order_id} успешно доставлен! Спасибо, что выбираете нас.")
+    except Exception:
+        pass
 
-# --- СТАРТ ПРИЛОЖЕНИЯ ---
+
+# --- АДМИНИСТРАТОР: ОДОБРЕНИЕ / ОТКЛОНЕНИЕ КУРЬЕРОВ ---
+@router.callback_query(F.data.startswith("adm_appr_"))
+async def process_admin_approve(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    
+    target_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE users SET is_approved = TRUE WHERE user_id = $1", target_id)
+        
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ ОДОБРЕН")
+    
+    try:
+        target_lang = await get_lang(target_id)
+        await bot.send_message(target_id, TEXTS[target_lang]['approved'])
+    except Exception:
+        pass
+
+@router.callback_query(F.data.startswith("adm_decl_"))
+async def process_admin_decline(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID: return
+    
+    target_id = int(callback.data.split("_")[2])
+    await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ ОТКЛОНЕН")
+    
+    try:
+        target_lang = await get_lang(target_id)
+        await bot.send_message(target_id, "⚠️ Ваша заявка была отклонена администратором.")
+    except Exception:
+        pass
+
+# --- ГЛАВНАЯ ФУНКЦИЯ И ЗАПУСК ---
 async def main():
+    # Инициализация пула БД
     await init_db()
     
-    # Запуск web-сервера aiohttp для Render Free Web Service
-    # Render требует, чтобы приложение слушало порт PORT
+    # Настройка aiohttp для health-check (Render)
     app = web.Application()
     app.router.add_get('/', handle_ping)
     runner = web.AppRunner(app)
@@ -897,16 +956,14 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', PORT)
     await site.start()
     logging.info(f"Веб-сервер запущен на порту {PORT}")
-
-    # Запуск polling бота aiogram параллельно
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
-    finally:
-        await bot.session.close()
+    
+    # Удаление вебхука (на случай, если был настроен ранее) и запуск поллинга
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("Bot запущен (Polling)...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("Bot stopped!")
+        logging.info("Остановка бота...")
