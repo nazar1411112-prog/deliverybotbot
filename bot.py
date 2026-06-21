@@ -727,6 +727,7 @@ async def go_online(message: Message):
             await conn.execute("UPDATE users SET is_online = TRUE WHERE user_id = $1", message.from_user.id)
             await message.answer("🟢 Вы вышли на онлайн-смену! Ожидайте новые заказы.")
         else:llback_data="confirm_yes")],
+        llback_data="confirm_yes")],
         [InlineKeyboardButton(text=TEXTS[lang]['no'], callback_data="confirm_no")]
     ])
     
