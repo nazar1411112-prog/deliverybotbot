@@ -19,7 +19,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
-router = Router()
 
 
 
@@ -698,21 +697,63 @@ async def process_cargo_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(CreateOrder.addr_a)
     await callback.answer()
 
-@router.message(CreateOrder.addr_a, F.location)
+@router.message(CreateOrder.addr_a)
 async def process_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
-    await state.update_data(lat_a=message.location.latitude, lon_a=message.location.longitude)
-    
-    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]], resize_keyboard=True)
+
+    lat = lon = None
+
+    # 1. Telegram location (правильный способ)
+    if message.location:
+        lat = message.location.latitude
+        lon = message.location.longitude
+
+    # 2. текстовые координаты
+    elif message.text:
+        coords = extract_coordinates(message.text)
+        if coords:
+            lat, lon = coords
+
+    # ❌ ничего не распознали
+    if lat is None or lon is None:
+        await message.answer(TEXTS[lang]['invalid_geo'])
+        return
+
+    await state.update_data(lat_a=lat, lon_a=lon)
+
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📍 Отправить геопозицию", request_location=True)]],
+        resize_keyboard=True
+    )
+
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=kb)
     await state.set_state(CreateOrder.addr_b)
 
-@router.message(CreateOrder.addr_b, F.location)
+@router.message(CreateOrder.addr_b)
 async def process_addr_b(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
-    await state.update_data(lat_b=message.location.latitude, lon_b=message.location.longitude)
-    
-    await message.answer(TEXTS[lang]['phone_sender'], reply_markup=ReplyKeyboardRemove())
+
+    lat = lon = None
+
+    if message.location:
+        lat = message.location.latitude
+        lon = message.location.longitude
+    elif message.text:
+        coords = extract_coordinates(message.text)
+        if coords:
+            lat, lon = coords
+
+    if lat is None or lon is None:
+        await message.answer(TEXTS[lang]['invalid_geo'])
+        return
+
+    await state.update_data(lat_b=lat, lon_b=lon)
+
+    await message.answer(
+        TEXTS[lang]['phone_sender'],
+        reply_markup=ReplyKeyboardRemove()
+    )
+
     await state.set_state(CreateOrder.phone_sender)
 
 @router.message(CreateOrder.phone_sender)
@@ -899,26 +940,7 @@ async def process_order_confirm_no(callback: CallbackQuery, state: FSMContext):
 
 # --- ОТМЕНА ЗАКАЗА КЛИЕНТОМ (/cancel) ---
 @router.message(Command("cancel"))
-async def cmd_cancel_order(message: Message):
-    lang = await get_lang(message.from_user.id)
-    async with db_pool.acquire() as conn:
-        # Находим последний незавершенный заказ клиента
-        order = await conn.fetchrow(
-            "SELECT id, status FROM orders WHERE client_id = $1 AND status != 'completed' AND status != 'cancelled' ORDER BY id DESC LIMIT 1", 
-            message.from_user.id
-        )
-        
-        if not order:
-            await message.answer("⚠️ У вас нет активных заказов для отмены.")
-            return
-            
-        if order['status'] != 'pending':
-            await message.answer(TEXTS[lang]['cant_cancel'])
-            return
-            
-        await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", order['id'])
-        
-    await message.answer(TEXTS[lang]['order_cancelled'])
+
 
 
 # --- ВЕРИФИКАЦИЯ КУРЬЕРОВ АДМИНИСТРАТОРОМ ---
