@@ -191,7 +191,7 @@ async def init_db():
     async with db_pool.acquire() as conn:
         # Таблицы для БОТА ДОСТАВКИ
         await conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
+           await conn.execute("""CREATE TABLE IF NOT EXISTS users (...)""")
                 user_id BIGINT PRIMARY KEY,
                 role TEXT,
                 lang TEXT DEFAULT 'ru',
@@ -199,10 +199,10 @@ async def init_db():
                 is_online BOOLEAN DEFAULT FALSE,
                 username TEXT
             );
-            CREATE TABLE IF NOT EXISTS whitelist (
+           await conn.execute("""CREATE TABLE IF NOT EXISTS users (...)""")
                 user_id BIGINT PRIMARY KEY
             );
-            CREATE TABLE IF NOT EXISTS orders (
+          await conn.execute("""CREATE TABLE IF NOT EXISTS users (...)""")
                 id SERIAL PRIMARY KEY,
                 client_id BIGINT,
                 cargo_type TEXT,
@@ -356,6 +356,16 @@ async def cb_refresh_panel(callback: CallbackQuery):
     if callback.from_user.id not in admins: return
     await callback.answer("Данные обновлены")
     await render_admin_panel(callback)
+
+@router.message(CreateOrder.addr_a)
+async def invalid_addr_a(message: Message):
+    lang = await get_lang(message.from_user.id)
+    await message.answer(TEXTS[lang]['invalid_geo'])
+
+@router.message(CreateOrder.addr_b)
+async def invalid_addr_b(message: Message):
+    lang = await get_lang(message.from_user.id)
+    await message.answer(TEXTS[lang]['invalid_geo'])
 
 @router.callback_query(F.data.startswith("p_hist_"))
 async def cb_admin_view_history(callback: CallbackQuery):
@@ -584,11 +594,11 @@ async def courier_photo_reg(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="✅ Одобрить курьера", callback_data=f"adm_appr_{message.from_user.id}")],
         [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_decl_{message.from_user.id}")]
     ])
-    
-    await bot.send_photo(
-        ADMIN_ID, 
-        photo_id, 
-        username = (
+await conn.execute(
+    "INSERT INTO whitelist (user_id) VALUES ($1) ON CONFLICT DO NOTHING",
+    target_courier_id
+)
+   username = (
     f"@{message.from_user.username}"
     if message.from_user.username
     else "без username"
@@ -598,6 +608,14 @@ caption = (
     f"Новая заявка в курьеры!\n"
     f"ID: `{message.from_user.id}`\n"
     f"Username: {username}"
+)
+
+await bot.send_photo(
+    ADMIN_ID,
+    photo_id,
+    caption=caption,
+    reply_markup=kb,
+    parse_mode="Markdown"
 )
         reply_markup=kb
     )
@@ -658,7 +676,7 @@ async def process_phone_receiver(message: Message, state: FSMContext):
     await state.set_state(CreateOrder.comment)
 
 
-@router.message(Command("skip"), CreateOrder.comment)
+@router.message(CreateOrder.comment, Command("skip"))
 async def skip_comment(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
 
@@ -751,7 +769,6 @@ async def process_comment(message: Message, state: FSMContext):
 
 
     
-    await state.update_data(comment=comment, price=price, map_url=map_url)
     
     c_type_str = "📦 Стандарт" if data['cargo_type'] == 'standard' else "🚚 Грузовой"
     text = TEXTS[lang]['confirm_title'].format(
@@ -958,12 +975,36 @@ async def start_afk_inactivity_timer(order_id: int, target_status: str, timeout_
 async def cb_courier_take_order(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
+
+    user = await conn.fetchrow(
+    "SELECT role, is_approved FROM users WHERE user_id=$1",
+    callback.from_user.id
+)
+
+if not user or user["role"] != "courier" or not user["is_approved"]:
+    await callback.answer(
+        "Только одобренный курьер может принять заказ",
+        show_alert=True
+    )
+    return
     
     async with db_pool.acquire() as conn:
-        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
-        if not order or order['status'] != 'pending':
-            await callback.answer("⚠️ Этот заказ уже взят другим курьером или отменен.", show_alert=True)
-            return
+        result = await conn.execute(
+    """
+    UPDATE orders
+    SET courier_id=$1, status='accepted'
+    WHERE id=$2 AND status='pending'
+    """,
+    callback.from_user.id,
+    order_id
+)
+
+if result == "UPDATE 0":
+    await callback.answer(
+        "Заказ уже взят другим курьером",
+        show_alert=True
+    )
+    return
             
         await conn.execute("UPDATE orders SET courier_id = $1, status = 'accepted' WHERE id = $2", callback.from_user.id, order_id)
         
