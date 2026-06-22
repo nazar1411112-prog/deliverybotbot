@@ -5,6 +5,9 @@ from datetime import datetime
 import asyncpg
 import aiohttp
 from aiohttp import web
+from aiogram import Router
+from aiogram.filters import Command
+
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
@@ -16,6 +19,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
+router = Router()
 
 
 
