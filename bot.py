@@ -20,7 +20,10 @@ from aiogram.exceptions import TelegramBadRequest
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN not set")
 DATABASE_URL = os.getenv("DATABASE_URL", "ВАШ_URL_БД")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PORT = int(os.getenv("PORT", "8080")) # Порт для Render Free Web Service
@@ -190,35 +193,43 @@ async def init_db():
     db_pool = await asyncpg.create_pool(DATABASE_URL)
     async with db_pool.acquire() as conn:
         # Таблицы для БОТА ДОСТАВКИ
-        await conn.execute('''
-           await conn.execute("""CREATE TABLE IF NOT EXISTS users (...)""")
-                user_id BIGINT PRIMARY KEY,
-                role TEXT,
-                lang TEXT DEFAULT 'ru',
-                is_approved BOOLEAN DEFAULT FALSE,
-                is_online BOOLEAN DEFAULT FALSE,
-                username TEXT
-            );
-           await conn.execute("""CREATE TABLE IF NOT EXISTS users (...)""")
-                user_id BIGINT PRIMARY KEY
-            );
-          await conn.execute("""CREATE TABLE IF NOT EXISTS users (...)""")
-                id SERIAL PRIMARY KEY,
-                client_id BIGINT,
-                cargo_type TEXT,
-                addr_a TEXT,
-                addr_b TEXT,
-                lat_a NUMERIC, lon_a NUMERIC,
-                lat_b NUMERIC, lon_b NUMERIC,
-                phone_sender TEXT,
-                phone_receiver TEXT,
-                comment TEXT,
-                price NUMERIC,
-                status TEXT DEFAULT 'pending',
-                courier_id BIGINT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        ''')
+        await conn.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id BIGINT PRIMARY KEY,
+    role TEXT,
+    lang TEXT DEFAULT 'ru',
+    is_approved BOOLEAN DEFAULT FALSE,
+    is_online BOOLEAN DEFAULT FALSE,
+    username TEXT
+);
+""")
+
+await conn.execute("""
+CREATE TABLE IF NOT EXISTS whitelist (
+    user_id BIGINT PRIMARY KEY
+);
+""")
+
+await conn.execute("""
+CREATE TABLE IF NOT EXISTS orders (
+    id SERIAL PRIMARY KEY,
+    client_id BIGINT,
+    cargo_type TEXT,
+    addr_a TEXT,
+    addr_b TEXT,
+    lat_a NUMERIC,
+    lon_a NUMERIC,
+    lat_b NUMERIC,
+    lon_b NUMERIC,
+    phone_sender TEXT,
+    phone_receiver TEXT,
+    comment TEXT,
+    price NUMERIC,
+    status TEXT DEFAULT 'pending',
+    courier_id BIGINT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+""")
 
 async def get_lang(user_id):
     async with db_pool.acquire() as conn:
@@ -589,37 +600,41 @@ async def process_role(callback: CallbackQuery, state: FSMContext):
 async def courier_photo_reg(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
     photo_id = message.photo[-1].file_id
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Одобрить курьера", callback_data=f"adm_appr_{message.from_user.id}")],
-        [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"adm_decl_{message.from_user.id}")]
-    ])
-await conn.execute(
-    "INSERT INTO whitelist (user_id) VALUES ($1) ON CONFLICT DO NOTHING",
-    target_courier_id
-)
-   username = (
-    f"@{message.from_user.username}"
-    if message.from_user.username
-    else "без username"
-)
 
-caption = (
-    f"Новая заявка в курьеры!\n"
-    f"ID: `{message.from_user.id}`\n"
-    f"Username: {username}"
-)
-
-await bot.send_photo(
-    ADMIN_ID,
-    photo_id,
-    caption=caption,
-    reply_markup=kb,
-    parse_mode="Markdown"
-)
-        reply_markup=kb
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="✅ Одобрить курьера",
+                callback_data=f"adm_appr_{message.from_user.id}"
+            )],
+            [InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"adm_decl_{message.from_user.id}"
+            )]
+        ]
     )
-    await message.answer(TEXTS[lang]['wait_admin'])
+
+    username = (
+        f"@{message.from_user.username}"
+        if message.from_user.username
+        else "без username"
+    )
+
+    caption = (
+        f"Новая заявка в курьеры!\n"
+        f"ID: `{message.from_user.id}`\n"
+        f"Username: {username}"
+    )
+
+    await bot.send_photo(
+        ADMIN_ID,
+        photo_id,
+        caption=caption,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
+    await message.answer(TEXTS[lang]["wait_admin"])
     await state.clear()
 
 # --- МЕНЮ КЛИЕНТА: СОЗДАНИЕ И ОТМЕНА ЗАКАЗА ---
@@ -976,7 +991,8 @@ async def cb_courier_take_order(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
 
-    user = await conn.fetchrow(
+    async with db_pool.acquire() as conn:
+    user = await conn.fetchrow(...)
     "SELECT role, is_approved FROM users WHERE user_id=$1",
     callback.from_user.id
 )
@@ -1006,9 +1022,14 @@ if result == "UPDATE 0":
     )
     return
             
-        await conn.execute("UPDATE orders SET courier_id = $1, status = 'accepted' WHERE id = $2", callback.from_user.id, order_id)
         
-    _, map_url = await get_osrm_data(order['lat_a'], order['lon_a'], order['lat_b'], order['lon_b'])
+     order = await conn.fetchrow(...)  
+  _, map_url = await get_osrm_data(
+    order['lat_a'],
+    order['lon_a'],
+    order['lat_b'],
+    order['lon_b']
+)
     
     text = TEXTS[lang]['order_taken'].format(
         p_send=order['phone_sender'], p_recv=order['phone_receiver'], comm=order['comment'], url=map_url
@@ -1032,7 +1053,7 @@ if result == "UPDATE 0":
         text,
         reply_markup=kb,
         disable_web_page_preview=True,
-        parse_mode="Markdown"
+        parse_mode="MarkdownV2"
     )
     # Уведомляем клиента
     try:
@@ -1122,6 +1143,7 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
+
    
 
 # --- СТАРТ СЕРВЕРА ---
@@ -1141,3 +1163,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+await runner.cleanup()
+await bot.session.close()
