@@ -726,8 +726,9 @@ async def process_addr_a(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]['addr_b'], reply_markup=kb)
     await state.set_state(CreateOrder.addr_b)
 
-@router.message(CreateOrder.addr_b)
-async def process_addr_b(message: Message, state: FSMContext):
+@router.message(CreateOrder.addr_a)
+async def invalid_addr_a(message: Message):
+    await message.answer("⚠️ Используйте кнопку геолокации")
     lang = await get_lang(message.from_user.id)
 
     lat = None
