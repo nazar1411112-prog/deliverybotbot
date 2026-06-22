@@ -588,7 +588,17 @@ async def courier_photo_reg(message: Message, state: FSMContext):
     await bot.send_photo(
         ADMIN_ID, 
         photo_id, 
-        caption=f"Новая заявка в курьеры!\nID: `{message.from_user.id}`\nUsername: @{message.from_user.username}", 
+        username = (
+    f"@{message.from_user.username}"
+    if message.from_user.username
+    else "без username"
+)
+
+caption = (
+    f"Новая заявка в курьеры!\n"
+    f"ID: `{message.from_user.id}`\n"
+    f"Username: {username}"
+)
         reply_markup=kb
     )
     await message.answer(TEXTS[lang]['wait_admin'])
@@ -647,27 +657,99 @@ async def process_phone_receiver(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]['comment'])
     await state.set_state(CreateOrder.comment)
 
+
+@router.message(Command("skip"), CreateOrder.comment)
+async def skip_comment(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
+
+    data = await state.get_data()
+
+    dist_km, map_url = await get_osrm_data(
+        data['lat_a'],
+        data['lon_a'],
+        data['lat_b'],
+        data['lon_b']
+    )
+
+    rate = 10 if data['cargo_type'] == 'standard' else 20
+    price = round((dist_km * rate) + 40, 2)
+
+    if price < 60:
+        price = 60.0
+
+    comment = "Нет комментария"
+
+    await state.update_data(
+        comment=comment,
+        price=price,
+        map_url=map_url
+    )
+
+    c_type_str = (
+        "📦 Стандарт"
+        if data['cargo_type'] == 'standard'
+        else "🚚 Грузовой"
+    )
+
+    text = TEXTS[lang]['confirm_title'].format(
+        type=c_type_str,
+        p_send=data['phone_sender'],
+        p_recv=data['phone_receiver'],
+        comm=comment,
+        price=price
+    )
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=TEXTS[lang]['yes'],
+                    callback_data="order_confirm_yes"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=TEXTS[lang]['no'],
+                    callback_data="order_confirm_no"
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
+    await state.set_state(CreateOrder.confirm)
+
 @router.message(CreateOrder.comment)
 async def process_comment(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
     comment = message.text if message.text.lower() != '/skip' else "Нет комментария"
     data = await state.get_data()
-    
-dist_km, map_url = await get_osrm_data(
-    data['lat_a'],
-    data['lon_a'],
-    data['lat_b'],
-    data['lon_b']
-)
 
-rate = 10 if data['cargo_type'] == 'standard' else 20
-price = round((dist_km * rate) + 40, 2)
+    dist_km, map_url = await get_osrm_data(
+        data['lat_a'],
+        data['lon_a'],
+        data['lat_b'],
+        data['lon_b']
+    )
 
-if price < 60:
-    price = 60.0
+    rate = 10 if data['cargo_type'] == 'standard' else 20
+    price = round((dist_km * rate) + 40, 2)
 
-price = round(price, 2)
-    if price < 30: price = 60.0  # Минимальная сумма
+    if price < 60:
+        price = 60.0
+
+    await state.update_data(
+        comment=comment,
+        price=price,
+        map_url=map_url
+    )
+
+
     
     await state.update_data(comment=comment, price=price, map_url=map_url)
     
@@ -892,26 +974,25 @@ async def cb_courier_take_order(callback: CallbackQuery):
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"order_ata_{order_id}")]
-    ])
+        ])
 
-   await bot.send_location(
-    callback.from_user.id,
-    latitude=float(order['lat_a']),
-    longitude=float(order['lon_a'])
-)
+    await bot.send_location(
+        callback.from_user.id,
+        latitude=float(order['lat_a']),
+        longitude=float(order['lon_a'])
+    )
+    await bot.send_location(
+        callback.from_user.id,
+        latitude=float(order['lat_b']),
+        longitude=float(order['lon_b'])
+    )
 
-await bot.send_location(
-    callback.from_user.id,
-    latitude=float(order['lat_b']),
-    longitude=float(order['lon_b'])
-)
-
-await callback.message.edit_text(
-    text,
-    reply_markup=kb,
-    disable_web_page_preview=True,
-    parse_mode="Markdown"
-)
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        disable_web_page_preview=True,
+        parse_mode="Markdown"
+    )
     # Уведомляем клиента
     try:
         cl_lang = await get_lang(order['client_id'])
@@ -1000,12 +1081,7 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
-
-
-# --- Обработка принятия заказа курьером ---
-
-    # Уведомляем клиента
-    await bot.send_message(order['client_id'], f"🚀 Курьер принял ваш заказ #{order_id}!")
+   
 
 # --- СТАРТ СЕРВЕРА ---
 async def main():
