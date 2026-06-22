@@ -191,45 +191,45 @@ async def get_all_admins():
 async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL)
+
     async with db_pool.acquire() as conn:
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            role TEXT,
-            lang TEXT DEFAULT 'ru',
-            is_approved BOOLEAN DEFAULT FALSE,
-            is_online BOOLEAN DEFAULT FALSE,
-            username TEXT
-        );
-    """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                role TEXT,
+                lang TEXT DEFAULT 'ru',
+                is_approved BOOLEAN DEFAULT FALSE,
+                is_online BOOLEAN DEFAULT FALSE,
+                username TEXT
+            );
+        """)
 
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS whitelist (
-            user_id BIGINT PRIMARY KEY
-        );
-    """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS whitelist (
+                user_id BIGINT PRIMARY KEY
+            );
+        """)
 
-    await conn.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id SERIAL PRIMARY KEY,
-            client_id BIGINT,
-            cargo_type TEXT,
-            addr_a TEXT,
-            addr_b TEXT,
-            lat_a NUMERIC,
-            lon_a NUMERIC,
-            lat_b NUMERIC,
-            lon_b NUMERIC,
-            phone_sender TEXT,
-            phone_receiver TEXT,
-            comment TEXT,
-            price NUMERIC,
-            status TEXT DEFAULT 'pending',
-            courier_id BIGINT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                client_id BIGINT,
+                cargo_type TEXT,
+                addr_a TEXT,
+                addr_b TEXT,
+                lat_a NUMERIC,
+                lon_a NUMERIC,
+                lat_b NUMERIC,
+                lon_b NUMERIC,
+                phone_sender TEXT,
+                phone_receiver TEXT,
+                comment TEXT,
+                price NUMERIC,
+                status TEXT DEFAULT 'pending',
+                courier_id BIGINT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
 async def get_lang(user_id):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT lang FROM users WHERE user_id = $1", user_id)
@@ -990,7 +990,7 @@ async def cb_courier_take_order(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
 
-  async with db_pool.acquire() as conn:
+async with db_pool.acquire() as conn:
     user = await conn.fetchrow(
         """
         SELECT role, is_approved
