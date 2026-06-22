@@ -1037,24 +1037,7 @@ async def broadcast_new_order(order_id, data):
             logging.error(f"Не удалось отправить заказ курьеру {c_id}: {e}")
 
 # --- Обработка принятия заказа курьером ---
-@router.callback_query(F.data.startswith("take_ord_"))
-async def cb_take_order(callback: CallbackQuery):
-    order_id = int(callback.data.split("_")[2])
-    courier_id = callback.from_user.id
-    
-    async with db_pool.acquire() as conn:
-        # Проверяем, свободен ли еще заказ
-        order = await conn.fetchrow("SELECT status, client_id, phone_sender, phone_receiver, comment FROM orders WHERE id = $1", order_id)
-        
-        if order['status'] != 'pending':
-            return await callback.answer("❌ Заказ уже принят другим курьером!", show_alert=True)
-        
-        # Обновляем статус
-        await conn.execute("UPDATE orders SET status = 'accepted', courier_id = $1 WHERE id = $2", courier_id, order_id)
-        
-    await callback.answer("✅ Вы приняли заказ!")
-    await callback.message.edit_text(f"🤝 Вы приняли заказ #{order_id}. Двигайтесь на точку А.")
-    
+
     # Уведомляем клиента
     await bot.send_message(order['client_id'], f"🚀 Курьер принял ваш заказ #{order_id}!")
 
