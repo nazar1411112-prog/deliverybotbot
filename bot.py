@@ -6,6 +6,8 @@ import asyncpg
 import aiohttp
 from aiohttp import web
 from aiogram import Router
+
+router = Router()
 from aiogram.filters import Command
 
 
