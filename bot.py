@@ -17,6 +17,23 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
 
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel_anywhere(message: Message, state: FSMContext):
+    try:
+        current_state = await state.get_state()
+
+        if current_state:
+            await state.clear()
+            await message.answer("❌ Операция отменена. Вы вышли из процесса.")
+        else:
+            await message.answer("ℹ️ Сейчас нет активного действия.")
+
+    except Exception as e:
+        await state.clear()
+        await message.answer("❌ Ошибка отмены, но процесс сброшен.")
+
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
