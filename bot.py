@@ -990,18 +990,39 @@ async def cb_courier_take_order(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
 
-   async with db_pool.acquire() as conn:
-   order = await conn.fetchrow(
-    """
-    SELECT *
-    FROM orders
-    WHERE id = $1
-    """,
-    order_id
-)
-if not user or user["role"] != "courier" or not user["is_approved"]:
+  async with db_pool.acquire() as conn:
+    user = await conn.fetchrow(
+        """
+        SELECT role, is_approved
+        FROM users
+        WHERE user_id = $1
+        """,
+        callback.from_user.id
+    )
+
+    if not user or user["role"] != "courier" or not user["is_approved"]:
+        await callback.answer(
+            "Только одобренный курьер может принять заказ",
+            show_alert=True
+        )
+        return
+
+    order = await conn.fetchrow(
+        """
+        UPDATE orders
+        SET courier_id = $1,
+            status = 'accepted'
+        WHERE id = $2
+          AND status = 'pending'
+        RETURNING *
+        """,
+        callback.from_user.id,
+        order_id
+    )
+
+if not order:
     await callback.answer(
-        "Только одобренный курьер может принять заказ",
+        "Заказ уже взят другим курьером",
         show_alert=True
     )
     return
