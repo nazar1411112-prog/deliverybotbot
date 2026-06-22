@@ -990,85 +990,66 @@ async def cb_courier_take_order(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
 
-async with db_pool.acquire() as conn:
-    user = await conn.fetchrow(
-        """
-        SELECT role, is_approved
-        FROM users
-        WHERE user_id = $1
-        """,
-        callback.from_user.id
-    )
-
-    if not user or user["role"] != "courier" or not user["is_approved"]:
-        await callback.answer(
-            "Только одобренный курьер может принять заказ",
-            show_alert=True
+    async with db_pool.acquire() as conn:
+        user = await conn.fetchrow(
+            """
+            SELECT role, is_approved
+            FROM users
+            WHERE user_id = $1
+            """,
+            callback.from_user.id
         )
+
+        if not user or user["role"] != "courier" or not user["is_approved"]:
+            await callback.answer(
+                "Только одобренный курьер может принять заказ",
+                show_alert=True
+            )
+            return
+
+        order = await conn.fetchrow(
+            """
+            UPDATE orders
+            SET courier_id = $1,
+                status = 'accepted'
+            WHERE id = $2
+              AND status = 'pending'
+            RETURNING *
+            """,
+            callback.from_user.id,
+            order_id
+        )
+
+    if not order:
+        await callback.answer("Заказ уже взят другим курьером", show_alert=True)
         return
 
-    order = await conn.fetchrow(
-        """
-        UPDATE orders
-        SET courier_id = $1,
-            status = 'accepted'
-        WHERE id = $2
-          AND status = 'pending'
-        RETURNING *
-        """,
-        callback.from_user.id,
-        order_id
+    _, map_url = await get_osrm_data(
+        float(order["lat_a"]),
+        float(order["lon_a"]),
+        float(order["lat_b"]),
+        float(order["lon_b"])
     )
 
-if not order:
-    await callback.answer(
-        "Заказ уже взят другим курьером",
-        show_alert=True
-    )
-    return
-    
-async with db_pool.acquire() as conn:
-    result = await conn.execute(
-        """
-        UPDATE orders
-        SET courier_id = $1,
-            status = 'accepted'
-        WHERE id = $2
-          AND status = 'pending'
-        """,
-        callback.from_user.id,
-        order_id
-    )
-
-    if result == "UPDATE 0":
-        await callback.answer(
-            "Заказ уже взят другим курьером",
-            show_alert=True
-        )
-        return
-            
-        
-_, map_url = await get_osrm_data(
-    float(order["lat_a"]),
-    float(order["lon_a"]),
-    float(order["lat_b"]),
-    float(order["lon_b"])
-)
-    
     text = TEXTS[lang]['order_taken'].format(
-        p_send=order['phone_sender'], p_recv=order['phone_receiver'], comm=order['comment'], url=map_url
+        p_send=order['phone_sender'],
+        p_recv=order['phone_receiver'],
+        comm=order['comment'],
+        url=map_url
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"order_ata_{order_id}")]
-        ])
 
-    await bot.send_location(
-        callback.from_user.id,
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=TEXTS[lang]['at_a_btn'],
+            callback_data=f"order_ata_{order_id}"
+        )]
+    ])
+
+    await bot.send_location(callback.from_user.id,
         latitude=float(order['lat_a']),
         longitude=float(order['lon_a'])
     )
-    await bot.send_location(
-        callback.from_user.id,
+    await bot.send_location(callback.from_user.id,
         latitude=float(order['lat_b']),
         longitude=float(order['lon_b'])
     )
@@ -1076,22 +1057,28 @@ _, map_url = await get_osrm_data(
     await callback.message.edit_text(
         text,
         reply_markup=kb,
-        disable_web_page_preview=True,
-        parse_mode="MarkdownV2"
+        parse_mode="Markdown"
     )
-    # Уведомляем клиента
+
     try:
-        cl_lang = await get_lang(order['client_id'])
-        await bot.send_message(order['client_id'], f"🤝 Ваш заказ #{order_id} принят курьером! Он уже направляется на точку А.")
-    except Exception: pass
+        await bot.send_message(
+            order['client_id'],
+            f"🤝 Ваш заказ #{order_id} принят курьером!"
+        )
+    except Exception:
+        pass
 
-    # Запускаем 10-минутный таймер неактивности до прибытия на точку А (600 сек)
-    if order_id in active_afk_tasks: active_afk_tasks[order_id].cancel()
-    task = asyncio.create_task(start_afk_inactivity_timer(order_id, 'accepted', 600, order['client_id'], callback.from_user.id))
-    active_afk_tasks[order_id] = task
-    
+    if order_id in active_afk_tasks:
+        active_afk_tasks[order_id].cancel()
+
+    active_afk_tasks[order_id] = asyncio.create_task(
+        start_afk_inactivity_timer(
+            order_id, 'accepted', 600,
+            order['client_id'], callback.from_user.id
+        )
+    )
+
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith("order_ata_"))
 async def cb_courier_at_point_a(callback: CallbackQuery):
@@ -1172,24 +1159,24 @@ async def cb_courier_complete_order(callback: CallbackQuery):
 
 # --- СТАРТ СЕРВЕРА ---
 async def main():
+    runner = None
     try:
         await init_db()
-    
-    # Запуск веб-сервера
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
-    
-    logging.info("Бот запущен и веб-сервер работает.")
-   await dp.start_polling(bot)
+
+        app = web.Application()
+        app.router.add_get("/", handle_ping)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
+        await site.start()
+
+        logging.info("Бот запущен и веб-сервер работает.")
+
+        await dp.start_polling(bot)
+
     finally:
-        await runner.cleanup()
+        if runner:
+            await runner.cleanup()
         await bot.session.close()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
