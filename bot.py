@@ -17,6 +17,25 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
 
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+
+async def safe_send(func, *args, **kwargs):
+    """Защита от падений Telegram API"""
+    try:
+        return await func(*args, **kwargs)
+    except Exception as e:
+        logging.warning(f"Telegram send error: {e}")
+        return None
+
+
+def parse_price(value):
+    try:
+        return round(float(value), 2)
+    except:
+        return 0.0
+
 # --- ИНИЦИАЛИЗАЦИЯ И ЛОГИРОВАНИЕ ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -1180,3 +1199,5 @@ async def main():
         if runner:
             await runner.cleanup()
         await bot.session.close()
+        if __name__ == "__main__":
+    asyncio.run(main())
