@@ -192,44 +192,43 @@ async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL)
     async with db_pool.acquire() as conn:
-        # Таблицы для БОТА ДОСТАВКИ
-        await conn.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT PRIMARY KEY,
-    role TEXT,
-    lang TEXT DEFAULT 'ru',
-    is_approved BOOLEAN DEFAULT FALSE,
-    is_online BOOLEAN DEFAULT FALSE,
-    username TEXT
-);
-""")
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            role TEXT,
+            lang TEXT DEFAULT 'ru',
+            is_approved BOOLEAN DEFAULT FALSE,
+            is_online BOOLEAN DEFAULT FALSE,
+            username TEXT
+        );
+    """)
 
-await conn.execute("""
-CREATE TABLE IF NOT EXISTS whitelist (
-    user_id BIGINT PRIMARY KEY
-);
-""")
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS whitelist (
+            user_id BIGINT PRIMARY KEY
+        );
+    """)
 
-await conn.execute("""
-CREATE TABLE IF NOT EXISTS orders (
-    id SERIAL PRIMARY KEY,
-    client_id BIGINT,
-    cargo_type TEXT,
-    addr_a TEXT,
-    addr_b TEXT,
-    lat_a NUMERIC,
-    lon_a NUMERIC,
-    lat_b NUMERIC,
-    lon_b NUMERIC,
-    phone_sender TEXT,
-    phone_receiver TEXT,
-    comment TEXT,
-    price NUMERIC,
-    status TEXT DEFAULT 'pending',
-    courier_id BIGINT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-""")
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            client_id BIGINT,
+            cargo_type TEXT,
+            addr_a TEXT,
+            addr_b TEXT,
+            lat_a NUMERIC,
+            lon_a NUMERIC,
+            lat_b NUMERIC,
+            lon_b NUMERIC,
+            phone_sender TEXT,
+            phone_receiver TEXT,
+            comment TEXT,
+            price NUMERIC,
+            status TEXT DEFAULT 'pending',
+            courier_id BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
 async def get_lang(user_id):
     async with db_pool.acquire() as conn:
@@ -991,12 +990,15 @@ async def cb_courier_take_order(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     order_id = int(callback.data.split("_")[2])
 
-    async with db_pool.acquire() as conn:
-    user = await conn.fetchrow(...)
-    "SELECT role, is_approved FROM users WHERE user_id=$1",
-    callback.from_user.id
+   async with db_pool.acquire() as conn:
+   order = await conn.fetchrow(
+    """
+    SELECT *
+    FROM orders
+    WHERE id = $1
+    """,
+    order_id
 )
-
 if not user or user["role"] != "courier" or not user["is_approved"]:
     await callback.answer(
         "Только одобренный курьер может принять заказ",
@@ -1004,31 +1006,32 @@ if not user or user["role"] != "courier" or not user["is_approved"]:
     )
     return
     
-    async with db_pool.acquire() as conn:
-        result = await conn.execute(
-    """
-    UPDATE orders
-    SET courier_id=$1, status='accepted'
-    WHERE id=$2 AND status='pending'
-    """,
-    callback.from_user.id,
-    order_id
-)
-
-if result == "UPDATE 0":
-    await callback.answer(
-        "Заказ уже взят другим курьером",
-        show_alert=True
+async with db_pool.acquire() as conn:
+    result = await conn.execute(
+        """
+        UPDATE orders
+        SET courier_id = $1,
+            status = 'accepted'
+        WHERE id = $2
+          AND status = 'pending'
+        """,
+        callback.from_user.id,
+        order_id
     )
-    return
+
+    if result == "UPDATE 0":
+        await callback.answer(
+            "Заказ уже взят другим курьером",
+            show_alert=True
+        )
+        return
             
         
-     order = await conn.fetchrow(...)  
-  _, map_url = await get_osrm_data(
-    order['lat_a'],
-    order['lon_a'],
-    order['lat_b'],
-    order['lon_b']
+_, map_url = await get_osrm_data(
+    float(order["lat_a"]),
+    float(order["lon_a"]),
+    float(order["lat_b"]),
+    float(order["lon_b"])
 )
     
     text = TEXTS[lang]['order_taken'].format(
@@ -1148,7 +1151,8 @@ async def cb_courier_complete_order(callback: CallbackQuery):
 
 # --- СТАРТ СЕРВЕРА ---
 async def main():
-    await init_db()
+    try:
+        await init_db()
     
     # Запуск веб-сервера
     app = web.Application()
@@ -1159,10 +1163,12 @@ async def main():
     await site.start()
     
     logging.info("Бот запущен и веб-сервер работает.")
-    await dp.start_polling(bot)
+   await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
+        await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
 
-await runner.cleanup()
-await bot.session.close()
+
