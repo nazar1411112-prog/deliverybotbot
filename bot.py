@@ -117,7 +117,7 @@ TEXTS = {
         'addr_b': "🏁 Trimiteți locația DESTINAȚIEI B folosind butonul de mai jos 👇:",
         'phone_sender': "📱 Introduceți numărul de telefon al EXPEDITORULUI:",
         'phone_receiver': "📱 Introduceți numărul de telefon al RECEPTORULUI:",
-        'comment':„💬 Introduceți un comentariu pentru curier și adresele punctelor A și B în text. Apăsați /skip pentru a sări peste:”,
+        'comment': "💬 Introduceți un comentariu pentru curier și adresele punctelor A și B în text. Apăsați /skip pentru a sări peste:",
         'confirm_title': "📋 Confirmare comandă:\n\n🔹 Tip: {type}\n🔹 Tel. Expeditor: {p_send}\n🔹 Tel. Receptor: {p_recv}\n🔹 Comentariu: {comm}\n💵 Preț total: {price} MDL\n\nEste corect?",
         'yes': "✅ Da, comand",
         'no': "❌ Anulare",
