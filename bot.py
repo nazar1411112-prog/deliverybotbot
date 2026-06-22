@@ -703,20 +703,15 @@ async def process_cargo_type(callback: CallbackQuery, state: FSMContext):
 async def process_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
 
-    lat = lon = None
+    lat = None
+    lon = None
 
-    # 1. Telegram location (правильный способ)
+    # ✅ 1. нормальная геолокация Telegram (то что ты отправляешь с карты)
     if message.location:
         lat = message.location.latitude
         lon = message.location.longitude
 
-    # 2. текстовые координаты
-    elif message.text:
-        coords = extract_coordinates(message.text)
-        if coords:
-            lat, lon = coords
-
-    # ❌ ничего не распознали
+    # ❌ если нет location — значит это текст/мусор
     if lat is None or lon is None:
         await message.answer(TEXTS[lang]['invalid_geo'])
         return
@@ -735,15 +730,12 @@ async def process_addr_a(message: Message, state: FSMContext):
 async def process_addr_b(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
 
-    lat = lon = None
+    lat = None
+    lon = None
 
     if message.location:
         lat = message.location.latitude
         lon = message.location.longitude
-    elif message.text:
-        coords = extract_coordinates(message.text)
-        if coords:
-            lat, lon = coords
 
     if lat is None or lon is None:
         await message.answer(TEXTS[lang]['invalid_geo'])
