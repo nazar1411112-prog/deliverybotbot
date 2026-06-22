@@ -496,8 +496,16 @@ async def process_admin_reply_send(message: Message, state: FSMContext):
 
 # --- РАСЧЕТ МАРШРУТА OSRM ---
 async def get_osrm_data(lat1, lon1, lat2, lon2):
-    map_url = f"https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
-    osrm_api = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+   map_url = (
+    f"https://www.openstreetmap.org/directions"
+    f"?engine=fossgis_osrm_car"
+    f"&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
+)
+   osrm_api = (
+    f"https://router.project-osrm.org/route/v1/driving/"
+    f"{lon1},{lat1};{lon2},{lat2}"
+    f"?overview=false&geometries=geojson"
+)
     dist_km = 5.0
     try:
         async with aiohttp.ClientSession() as session:
@@ -642,9 +650,19 @@ async def process_comment(message: Message, state: FSMContext):
     data = await state.get_data()
     
     dist_km, map_url = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
-    multiplier = 10 if data['cargo_type'] == 'standard' else 20
-    price = round(dist_km * multiplier, 2)
-    if price < 30: price = 30.0 # Минимальная сумма
+    dist_km, map_url = await get_osrm_data(
+    data['lat_a'],
+    data['lon_a'],
+    data['lat_b'],
+    data['lon_b']
+)
+
+rate = 10 if data['cargo_type'] == 'standard' else 20
+
+price = (dist_km * rate) + 40
+
+price = round(price, 2)
+    if price < 30: price = 60.0  # Минимальная сумма
     
     await state.update_data(comment=comment, price=price, map_url=map_url)
     
@@ -870,6 +888,18 @@ async def cb_courier_take_order(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"order_ata_{order_id}")]
     ])
+
+    await bot.send_location(
+    callback.from_user.id,
+    latitude=float(order['lat_a']),
+    longitude=float(order['lon_a'])
+)
+
+await bot.send_location(
+    callback.from_user.id,
+    latitude=float(order['lat_b']),
+    longitude=float(order['lon_b'])
+)
     await callback.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True, parse_mode="Markdown")
     
     # Уведомляем клиента
