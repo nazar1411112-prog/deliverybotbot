@@ -496,17 +496,20 @@ async def process_admin_reply_send(message: Message, state: FSMContext):
 
 # --- РАСЧЕТ МАРШРУТА OSRM ---
 async def get_osrm_data(lat1, lon1, lat2, lon2):
-   map_url = (
-    f"https://www.openstreetmap.org/directions"
-    f"?engine=fossgis_osrm_car"
-    f"&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
-)
-   osrm_api = (
-    f"https://router.project-osrm.org/route/v1/driving/"
-    f"{lon1},{lat1};{lon2},{lat2}"
-    f"?overview=false&geometries=geojson"
-)
+    map_url = (
+        f"https://www.openstreetmap.org/directions"
+        f"?engine=fossgis_osrm_car"
+        f"&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
+    )
+
+    osrm_api = (
+        f"https://router.project-osrm.org/route/v1/driving/"
+        f"{lon1},{lat1};{lon2},{lat2}"
+        f"?overview=false&geometries=geojson"
+    )
+
     dist_km = 5.0
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(osrm_api, timeout=10) as resp:
@@ -515,6 +518,7 @@ async def get_osrm_data(lat1, lon1, lat2, lon2):
                     dist_km = data["routes"][0]["distance"] / 1000
     except Exception as e:
         logging.error(f"OSRM Routing error: {e}")
+
     return round(dist_km, 2), map_url
 
 # --- HTTP СЕРВЕР ДЛЯ UPTIME ROBOT / RENDER ---
@@ -649,8 +653,7 @@ async def process_comment(message: Message, state: FSMContext):
     comment = message.text if message.text.lower() != '/skip' else "Нет комментария"
     data = await state.get_data()
     
-    dist_km, map_url = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
-    dist_km, map_url = await get_osrm_data(
+dist_km, map_url = await get_osrm_data(
     data['lat_a'],
     data['lon_a'],
     data['lat_b'],
@@ -658,8 +661,10 @@ async def process_comment(message: Message, state: FSMContext):
 )
 
 rate = 10 if data['cargo_type'] == 'standard' else 20
+price = round((dist_km * rate) + 40, 2)
 
-price = (dist_km * rate) + 40
+if price < 60:
+    price = 60.0
 
 price = round(price, 2)
     if price < 30: price = 60.0  # Минимальная сумма
@@ -889,7 +894,7 @@ async def cb_courier_take_order(callback: CallbackQuery):
         [InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"order_ata_{order_id}")]
     ])
 
-    await bot.send_location(
+   await bot.send_location(
     callback.from_user.id,
     latitude=float(order['lat_a']),
     longitude=float(order['lon_a'])
@@ -900,8 +905,13 @@ await bot.send_location(
     latitude=float(order['lat_b']),
     longitude=float(order['lon_b'])
 )
-    await callback.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True, parse_mode="Markdown")
-    
+
+await callback.message.edit_text(
+    text,
+    reply_markup=kb,
+    disable_web_page_preview=True,
+    parse_mode="Markdown"
+)
     # Уведомляем клиента
     try:
         cl_lang = await get_lang(order['client_id'])
@@ -990,51 +1000,7 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
-# --- ЗАВЕРШЕНИЕ: Подтверждение заказа ---
-@router.callback_query(CreateOrder.confirm, F.data == "confirm_order")
-async def cb_confirm_order(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    lang = await get_lang(callback.from_user.id)
-    
-    # Сохранение в БД
-    async with db_pool.acquire() as conn:
-        res = await conn.execute("""
-            INSERT INTO orders (client_id, cargo_type, addr_a, addr_b, phone_sender, phone_receiver, comment, price, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
-            RETURNING id
-        """, callback.from_user.id, data['cargo_type'], str(data['lat_a'])+','+str(data['lon_a']), 
-             str(data['lat_b'])+','+str(data['lon_b']), data['phone_sender'], data['phone_receiver'], 
-             data['comment'], data['price'])
-        
-        order_id = res  # В зависимости от драйвера может вернуть id или строку
-        # Если нужно получить ID вставленной записи:
-        order_row = await conn.fetchrow("SELECT id FROM orders WHERE client_id = $1 ORDER BY id DESC LIMIT 1", callback.from_user.id)
-        order_id = order_row['id']
 
-    await callback.message.edit_text(TEXTS[lang]['order_placed'])
-    await state.clear()
-    
-    # Рассылка курьерам
-    await broadcast_new_order(order_id, data)
-
-# --- Логика оповещения курьеров ---
-async def broadcast_new_order(order_id, data):
-    async with db_pool.acquire() as conn:
-        online_couriers = await conn.fetch("SELECT user_id FROM users WHERE role = 'courier' AND is_online = TRUE")
-    
-    for courier in online_couriers:
-        c_id = courier['user_id']
-        try:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=f"✅ Принять заказ за {data['price']} MDL", callback_data=f"take_ord_{order_id}")]
-            ])
-            await bot.send_message(
-                c_id, 
-                f"🔔 **Новый заказ #{order_id}**\nТип: {data['cargo_type']}\nЦена: {data['price']} MDL\nКомментарий: {data['comment']}",
-                reply_markup=kb
-            )
-        except Exception as e:
-            logging.error(f"Не удалось отправить заказ курьеру {c_id}: {e}")
 
 # --- Обработка принятия заказа курьером ---
 
