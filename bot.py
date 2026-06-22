@@ -1178,26 +1178,25 @@ async def cb_courier_complete_order(callback: CallbackQuery):
 
 # --- СТАРТ СЕРВЕРА ---
 async def main():
-    runner = None
+    await init_db()
+
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    logging.info("Bot + Web server started")
+
     try:
-        await init_db()
-
-        app = web.Application()
-        app.router.add_get("/", handle_ping)
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-
-        site = web.TCPSite(runner, '0.0.0.0', PORT)
-        await site.start()
-
-        logging.info("Бот запущен и веб-сервер работает.")
-
         await dp.start_polling(bot)
-
     finally:
-        if runner:
-            await runner.cleanup()
+        await runner.cleanup()
         await bot.session.close()
-        if __name__ == "__main__":
+
+
+if __name__ == "__main__":
     asyncio.run(main())
