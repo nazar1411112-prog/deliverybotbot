@@ -55,7 +55,6 @@ class SupportStates(StatesGroup):
 
 class AdminReplyStates(StatesGroup):
     waiting_for_reply = State()
-    waiting_for_api_reply = State()
 
 # --- ЛОКАЛИЗАЦИЯ (RU, RO, EN) ---
 TEXTS = {
@@ -252,6 +251,8 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id SERIAL PRIMARY KEY,
                 client_id BIGINT,
+                name TEXT,
+                username TEXT,
                 message TEXT,
                 reply TEXT,
                 status TEXT DEFAULT 'open',
@@ -531,52 +532,21 @@ async def process_admin_reply_send(message: Message, state: FSMContext):
     target_lang = await get_lang(target_id)
     full_reply = f"{TEXTS[target_lang]['support_reply_header']}{message.text}"
     
-    try:
-        await bot.send_message(target_id, full_reply, parse_mode="Markdown")
-        await message.answer(f"✅ Ответ успешно перенаправлен пользователю `{target_id}`.")
-    except Exception as e:
-        await message.answer(f"❌ Не удалось отправить сообщение. Ошибка: {e}")
-        
-    await state.clear()
-
-# --- ТИ КЕТЫ ИЗ МОБИЛЬНОГО ПРИЛОЖЕНИЯ ---
-@router.callback_query(F.data.startswith("ap_ticket_"))
-async def cb_start_api_ticket_reply(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID: return
-    ticket_id = int(callback.data.split("_")[2])
-    
-    await state.update_data(reply_ticket_id=ticket_id)
-    await callback.message.answer(f"✍️ Введите текст ответа на тикет #{ticket_id}:")
-    await state.set_state(AdminReplyStates.waiting_for_api_reply)
-    await callback.answer()
-
-@router.message(AdminReplyStates.waiting_for_api_reply)
-async def process_admin_api_reply_send(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID: return
-    data = await state.get_data()
-    ticket_id = data.get("reply_ticket_id")
-    
-    if not ticket_id:
-        await message.answer("❌ Ошибка: тикет не найден в сессии.")
-        await state.clear()
-        return
-        
+    # 1. Сохраняем ответ в базу данных, чтобы Android-приложение моментально загрузило его
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            UPDATE support_tickets SET reply = $1, status = 'replied' WHERE id = $2
-        """, message.text, ticket_id)
+            UPDATE support_tickets 
+            SET reply = $1, status = 'resolved' 
+            WHERE client_id = $2 AND status = 'open'
+        """, message.text, target_id)
+
+    # 2. Дублируем ответ в Telegram пользователя (если он зарегистрирован у бота)
+    try:
+        await bot.send_message(target_id, full_reply, parse_mode="Markdown")
+        await message.answer(f"✅ Ответ успешно сохранен в базу данных и отправлен в Telegram пользователю `{target_id}`.")
+    except Exception as e:
+        await message.answer(f"✅ Ответ успешно сохранен в БД и доступен в Android-приложении. (В Telegram отправить не удалось: {e})")
         
-        ticket = await conn.fetchrow("SELECT client_id FROM support_tickets WHERE id = $1", ticket_id)
-        if ticket:
-            client_id = ticket['client_id']
-            target_lang = await get_lang(client_id)
-            full_reply = f"{TEXTS[target_lang]['support_reply_header']}{message.text}"
-            try:
-                await bot.send_message(client_id, full_reply, parse_mode="Markdown")
-            except Exception:
-                pass
-                
-    await message.answer(f"✅ Ответ на тикет #{ticket_id} успешно отправлен.")
     await state.clear()
 
 # --- РАСЧЕТ МАРШРУТА OSRM ---
@@ -603,41 +573,44 @@ async def get_osrm_data(lat1, lon1, lat2, lon2):
 
     return round(dist_km, 2), map_url
 
-# --- HTTP API ЭНДПОИНТЫ ДЛЯ ANDROID-ПРИЛОЖЕНИЯ ---
+# --- HTTP СЕРВЕР И REST API ДЛЯ ANDROID ПРИЛОЖЕНИЯ ---
 
 async def handle_ping(request):
     return web.Response(text="Keep Alive OK", status=200)
 
-async def handle_create_order(request):
+async def handle_create_order_api(request):
+    """ API для Android: Создание нового заказа """
     try:
         data = await request.json()
-        client_id = int(data.get("client_id", 0))
-        cargo_type = data.get("cargo_type", "standard")
-        lat_a = float(data.get("lat_a", 0.0))
-        lon_a = float(data.get("lon_a", 0.0))
-        lat_b = float(data.get("lat_b", 0.0))
-        lon_b = float(data.get("lon_b", 0.0))
-        phone_sender = data.get("phone_sender", "")
-        phone_receiver = data.get("phone_receiver", "")
-        comment = data.get("comment", "")
-        price = float(data.get("price", 0.0))
-
+        client_id = int(data['client_id'])
+        cargo_type = str(data['cargo_type'])
+        lat_a = float(data['lat_a'])
+        lon_a = float(data['lon_a'])
+        lat_b = float(data['lat_b'])
+        lon_b = float(data['lon_b'])
+        phone_sender = str(data['phone_sender'])
+        phone_receiver = str(data['phone_receiver'])
+        comment = str(data.get('comment', ''))
+        price = float(data['price'])
+        
         async with db_pool.acquire() as conn:
             order_id = await conn.fetchval("""
                 INSERT INTO orders (
                     client_id, cargo_type, addr_a, addr_b, lat_a, lon_a, lat_b, lon_b, 
                     phone_sender, phone_receiver, comment, price, status
-                ) VALUES ($1, $2, 'Точка А (Локация)', 'Точка Б (Локация)', $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')
                 RETURNING id
-            """, client_id, cargo_type, lat_a, lon_a, lat_b, lon_b, phone_sender, phone_receiver, comment, price)
+            """, 
+            client_id, cargo_type, "Точка А (Локация)", "Точка Б (Локация)",
+            lat_a, lon_a, lat_b, lon_b, phone_sender, phone_receiver, comment, price)
             
             online_couriers = await conn.fetch(
                 "SELECT user_id, lang FROM users WHERE role = 'courier' AND is_online = TRUE AND is_approved = TRUE"
             )
-
+            
         c_type_str = "📦 Стандарт" if cargo_type == 'standard' else "🚚 Грузовой"
         for courier in online_couriers:
-            c_lang = courier['lang'] or 'ru'
+            c_lang = courier['lang']
             c_text = (
                 f"🆕 **НОВЫЙ ЗАКАЗ #{order_id}!**\n\n"
                 f"🔹 Тип: {c_type_str}\n"
@@ -653,45 +626,119 @@ async def handle_create_order(request):
             try:
                 await bot.send_message(courier['user_id'], c_text, reply_markup=kb_take, parse_mode="Markdown")
             except Exception as e:
-                logging.error(f"Error sending order to courier {courier['user_id']}: {e}")
-
+                logging.error(f"Ошибка отправки заказа курьеру {courier['user_id']}: {e}")
+                
         return web.json_response({
             "success": True,
             "order_id": order_id,
             "error": None
         })
     except Exception as e:
-        logging.error(f"Error in handle_create_order: {e}")
+        logging.error(f"Error creating order via API: {e}")
         return web.json_response({
             "success": False,
             "order_id": None,
             "error": str(e)
         }, status=400)
 
-async def handle_get_active_order(request):
+async def handle_get_active_order_api(request):
+    """ API для Android: Получение текущего активного заказа """
     try:
         client_id = int(request.match_info['clientId'])
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT * FROM orders 
-                WHERE client_id = $1 AND status IN ('pending', 'accepted', 'at_a', 'at_b') 
-                ORDER BY id DESC LIMIT 1
+                SELECT o.*, u.username as courier_name 
+                FROM orders o 
+                LEFT JOIN users u ON o.courier_id = u.user_id 
+                WHERE o.client_id = $1 AND o.status IN ('pending', 'accepted', 'at_a', 'at_b')
+                ORDER BY o.id DESC LIMIT 1
             """, client_id)
             
-            if not row:
-                return web.json_response({
-                    "success": True,
-                    "order": None,
-                    "error": None
-                })
+        if not row:
+            return web.json_response({
+                "success": True,
+                "order": None,
+                "error": None
+            })
             
-            courier_id = row['courier_id']
-            courier_name = None
-            if courier_id:
-                courier_row = await conn.fetchrow("SELECT username FROM users WHERE user_id = $1", courier_id)
-                courier_name = courier_row['username'] if courier_row else f"Курьер ID {courier_id}"
+        order_dto = {
+            "id": row['id'],
+            "cargo_type": row['cargo_type'],
+            "lat_a": float(row['lat_a']),
+            "lon_a": float(row['lon_a']),
+            "lat_b": float(row['lat_b']),
+            "lon_b": float(row['lon_b']),
+            "phone_sender": row['phone_sender'],
+            "phone_receiver": row['phone_receiver'],
+            "comment": row['comment'],
+            "price": float(row['price']),
+            "status": row['status'],
+            "courier_id": row['courier_id'],
+            "courier_name": row['courier_name'],
+            "courier_lat": None,
+            "courier_lon": None
+        }
+        
+        return web.json_response({
+            "success": True,
+            "order": order_dto,
+            "error": None
+        })
+    except Exception as e:
+        logging.error(f"Error getting active order via API: {e}")
+        return web.json_response({
+            "success": False,
+            "order": None,
+            "error": str(e)
+        }, status=400)
 
-            order_dto = {
+async def handle_cancel_order_api(request):
+    """ API для Android: Отмена заказа клиентом """
+    try:
+        order_id = int(request.match_info['id'])
+        async with db_pool.acquire() as conn:
+            order = await conn.fetchrow("SELECT status, client_id, courier_id FROM orders WHERE id = $1", order_id)
+            if not order:
+                return web.json_response({
+                    "success": False,
+                    "error": "Заказ не найден"
+                }, status=404)
+                
+            if order['status'] != 'pending':
+                return web.json_response({
+                    "success": False,
+                    "error": "Нельзя отменить заказ после того, как курьер его принял"
+                }, status=400)
+                
+            await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", order_id)
+            
+        return web.json_response({
+            "success": True,
+            "error": None
+        })
+    except Exception as e:
+        logging.error(f"Error cancelling order via API: {e}")
+        return web.json_response({
+            "success": False,
+            "error": str(e)
+        }, status=400)
+
+async def handle_get_order_history_api(request):
+    """ API для Android: Получение истории заказов """
+    try:
+        client_id = int(request.match_info['clientId'])
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT o.*, u.username as courier_name 
+                FROM orders o 
+                LEFT JOIN users u ON o.courier_id = u.user_id 
+                WHERE o.client_id = $1 
+                ORDER BY o.id DESC LIMIT 50
+            """, client_id)
+            
+        orders = []
+        for row in rows:
+            orders.append({
                 "id": row['id'],
                 "cargo_type": row['cargo_type'],
                 "lat_a": float(row['lat_a']),
@@ -703,177 +750,102 @@ async def handle_get_active_order(request):
                 "comment": row['comment'],
                 "price": float(row['price']),
                 "status": row['status'],
-                "courier_id": courier_id,
-                "courier_name": courier_name,
+                "courier_id": row['courier_id'],
+                "courier_name": row['courier_name'],
                 "courier_lat": None,
                 "courier_lon": None
-            }
-            
-            return web.json_response({
-                "success": True,
-                "order": order_dto,
-                "error": None
             })
-    except Exception as e:
-        logging.error(f"Error in handle_get_active_order: {e}")
-        return web.json_response({
-            "success": False,
-            "order": None,
-            "error": str(e)
-        }, status=400)
-
-async def handle_cancel_order(request):
-    try:
-        order_id = int(request.match_info['id'])
-        async with db_pool.acquire() as conn:
-            order = await conn.fetchrow("SELECT status, client_id FROM orders WHERE id = $1", order_id)
-            if not order:
-                return web.json_response({
-                    "success": False,
-                    "error": "Заказ не найден."
-                })
-            
-            if order['status'] != 'pending':
-                return web.json_response({
-                    "success": False,
-                    "error": "Нельзя отменить заказ после того, как курьер его принял."
-                })
-                
-            await conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = $1", order_id)
             
         return web.json_response({
             "success": True,
+            "orders": orders,
             "error": None
         })
     except Exception as e:
-        logging.error(f"Error in handle_cancel_order: {e}")
-        return web.json_response({
-            "success": False,
-            "error": str(e)
-        }, status=400)
-
-async def handle_get_history(request):
-    try:
-        client_id = int(request.match_info['clientId'])
-        async with db_pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT * FROM orders 
-                WHERE client_id = $1 AND status IN ('completed', 'cancelled') 
-                ORDER BY id DESC LIMIT 50
-            """, client_id)
-            
-            orders_list = []
-            for row in rows:
-                courier_id = row['courier_id']
-                courier_name = None
-                if courier_id:
-                    courier_row = await conn.fetchrow("SELECT username FROM users WHERE user_id = $1", courier_id)
-                    courier_name = courier_row['username'] if courier_row else f"Курьер ID {courier_id}"
-
-                orders_list.append({
-                    "id": row['id'],
-                    "cargo_type": row['cargo_type'],
-                    "lat_a": float(row['lat_a']),
-                    "lon_a": float(row['lon_a']),
-                    "lat_b": float(row['lat_b']),
-                    "lon_b": float(row['lon_b']),
-                    "phone_sender": row['phone_sender'],
-                    "phone_receiver": row['phone_receiver'],
-                    "comment": row['comment'],
-                    "price": float(row['price']),
-                    "status": row['status'],
-                    "courier_id": courier_id,
-                    "courier_name": courier_name,
-                    "courier_lat": None,
-                    "courier_lon": None
-                })
-                
-            return web.json_response({
-                "success": True,
-                "orders": orders_list,
-                "error": None
-            })
-    except Exception as e:
-        logging.error(f"Error in handle_get_history: {e}")
+        logging.error(f"Error getting order history via API: {e}")
         return web.json_response({
             "success": False,
             "orders": [],
             "error": str(e)
         }, status=400)
 
-async def handle_submit_support(request):
+async def handle_submit_support_api(request):
+    """ API для Android: Отправка тикета в поддержку """
     try:
         data = await request.json()
-        client_id = int(data.get("client_id", 0))
-        name = data.get("name", "Клиент")
-        username = data.get("username", "")
-        text = data.get("text", "")
-
+        client_id = int(data['client_id'])
+        name = str(data['name'])
+        username = str(data['username'])
+        text = str(data['text'])
+        
         async with db_pool.acquire() as conn:
             ticket_id = await conn.fetchval("""
-                INSERT INTO support_tickets (client_id, message, status) 
-                VALUES ($1, $2, 'open') 
+                INSERT INTO support_tickets (client_id, name, username, message)
+                VALUES ($1, $2, $3, $4)
                 RETURNING id
-            """, client_id, text)
+            """, client_id, name, username, text)
             
-        tg_username = f"@{username}" if username else "без username"
+        # Уведомляем администратора в Telegram
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✉️ Ответить клиенту", callback_data=f"ticket_reply_{client_id}")]
+        ])
+        
         admin_text = (
-            f"📩 **НОВОЕ ОБРАЩЕНИЕ С МОБИЛЬНОГО ПРИЛОЖЕНИЯ!**\n\n"
+            f"📩 **НОВОЕ ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ (из Приложения)!**\n\n"
             f"👤 Отправитель: {name}\n"
             f"🆔 ID пользователя: `{client_id}`\n"
-            f"📱 Телеграм: {tg_username}\n\n"
+            f"📱 Телеграм: @{username if username else 'нет'}\n"
+            f"🎫 Номер тикета: `#{ticket_id}`\n\n"
             f"💬 **Текст обращения:**\n{text}"
         )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✉️ Ответить на тикет", callback_data=f"ap_ticket_{ticket_id}")]
-        ])
         
         try:
             await bot.send_message(ADMIN_ID, admin_text, reply_markup=kb, parse_mode="Markdown")
         except Exception as e:
-            logging.error(f"Error sending support alert to admin: {e}")
-
+            logging.error(f"Error sending support notification to admin: {e}")
+            
         return web.json_response({
             "success": True,
             "ticket_id": ticket_id,
             "error": None
         })
     except Exception as e:
-        logging.error(f"Error in handle_submit_support: {e}")
+        logging.error(f"Error submitting support via API: {e}")
         return web.json_response({
             "success": False,
             "ticket_id": None,
             "error": str(e)
         }, status=400)
 
-async def handle_get_support_tickets(request):
+async def handle_get_support_tickets_api(request):
+    """ API для Android: Загрузка истории чата поддержки """
     try:
         client_id = int(request.match_info['clientId'])
         async with db_pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT * FROM support_tickets 
                 WHERE client_id = $1 
-                ORDER BY id DESC LIMIT 50
+                ORDER BY id ASC
             """, client_id)
             
-            tickets_list = []
-            for row in rows:
-                tickets_list.append({
-                    "id": row['id'],
-                    "client_id": row['client_id'],
-                    "message": row['message'],
-                    "reply": row['reply'],
-                    "status": row['status'],
-                    "created_at": row['created_at'].isoformat() if row['created_at'] else None
-                })
-                
-            return web.json_response({
-                "success": True,
-                "tickets": tickets_list,
-                "error": None
+        tickets = []
+        for row in rows:
+            tickets.append({
+                "id": row['id'],
+                "client_id": row['client_id'],
+                "message": row['message'],
+                "reply": row['reply'],
+                "status": row['status'],
+                "created_at": row['created_at'].strftime('%Y-%m-%d %H:%M:%S') if row['created_at'] else None
             })
+            
+        return web.json_response({
+            "success": True,
+            "tickets": tickets,
+            "error": None
+        })
     except Exception as e:
-        logging.error(f"Error in handle_get_support_tickets: {e}")
+        logging.error(f"Error getting support tickets via API: {e}")
         return web.json_response({
             "success": False,
             "tickets": [],
@@ -1086,10 +1058,10 @@ async def process_order_confirm_yes(callback: CallbackQuery, state: FSMContext):
             INSERT INTO orders (
                 client_id, cargo_type, addr_a, addr_b, lat_a, lon_a, lat_b, lon_b, 
                 phone_sender, phone_receiver, comment, price, status
-            ) VALUES ($1, $2, 'Точка А (Локация)', 'Точка Б (Локация)', $3, $4, $5, $6, $7, $8, $9, $10, 'pending')
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')
             RETURNING id
         """, 
-        callback.from_user.id, data['cargo_type'],
+        callback.from_user.id, data['cargo_type'], "Точка А (Локация)", "Точка Б (Локация)",
         data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'],
         data['phone_sender'], data['phone_receiver'], data['comment'], data['price'])
         
@@ -1324,20 +1296,20 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
-# --- СТАРТ СЕРВЕРА С API ЭНДПОИНТАМИ ---
+# --- СТАРТ СЕРВЕРА С API И BOT ---
 async def main():
     await init_db()
 
     app = web.Application()
     
-    # Регистрация REST API Эндпоинтов для Android-приложения
+    # Регистрация REST API роутов для работы Android-приложения
     app.router.add_get("/", handle_ping)
-    app.router.add_post("/api/orders", handle_create_order)
-    app.router.add_get("/api/orders/active/{clientId}", handle_get_active_order)
-    app.router.add_post("/api/orders/{id}/cancel", handle_cancel_order)
-    app.router.add_get("/api/orders/history/{clientId}", handle_get_history)
-    app.router.add_post("/api/support", handle_submit_support)
-    app.router.add_get("/api/support/{clientId}", handle_get_support_tickets)
+    app.router.add_post("/api/orders", handle_create_order_api)
+    app.router.add_get("/api/orders/active/{clientId}", handle_get_active_order_api)
+    app.router.add_post("/api/orders/{id}/cancel", handle_cancel_order_api)
+    app.router.add_get("/api/orders/history/{clientId}", handle_get_order_history_api)
+    app.router.add_post("/api/support", handle_submit_support_api)
+    app.router.add_get("/api/support/{clientId}", handle_get_support_tickets_api)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -1345,7 +1317,7 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
-    logging.info("Bot + REST API Web server started successfully!")
+    logging.info(f"Bot + Web server with Android Rest API successfully started on port {PORT}")
 
     try:
         await dp.start_polling(bot)
