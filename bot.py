@@ -87,7 +87,7 @@ TEXTS = {
         'no_orders': "📭 На данный момент нет свободных заказов.",
         'take_btn': "✅ Принять заказ за {price} MDL",
         'cancel_btn': "❌ Отказаться",
-        'order_taken': "🤝 Вы приняли заказ! Двигайтесь на точку А.\nℹ️ Инфо:\n📞 Отправитель: {p_send}\n📞 Получатель: {p_recv}\n💬 Комм: {comm}\n🗺 Маршрут OSRM: {url}",
+        'order_taken': "🤝 Вы приняли заказ! Двигайтесь на точку А.\nℹ️ Инфо:\n📞 Отправитель: {p_send}\n📞 Получатель: {p_recv}\n💬 Комм: {comm}\n🗺 Маршрут Google Maps: {url}",
         'at_a_btn': "📍 Я на точке А",
         'at_b_btn': "🏁 Я на месте (Точка Б)",
         'done_btn': "💵 Завершить",
@@ -128,7 +128,7 @@ TEXTS = {
         'no_orders': "📭 În prezent nu există comenzi disponibile.",
         'take_btn': "✅ Acceptă comanda pentru {price} MDL",
         'cancel_btn': "❌ Refuză",
-        'order_taken': "🤝 Ați acceptat comanda! Deplasați-vă la punctul A.\nℹ️ Info:\n📞 Expeditor: {p_send}\n📞 Receptor: {p_recv}\n💬 Comm: {comm}\n🗺 Rută OSRM: {url}",
+        'order_taken': "🤝 Ați acceptat comanda! Deplasați-vă la punctul A.\nℹ️ Info:\n📞 Expeditor: {p_send}\n📞 Receptor: {p_recv}\n💬 Comm: {comm}\n🗺 Rută Google Maps: {url}",
         'at_a_btn': "📍 Sunt la punctul A",
         'at_b_btn': "🏁 Sunt la destinație (Punctul B)",
         'done_btn': "💵 Finalizează",
@@ -169,7 +169,7 @@ TEXTS = {
         'no_orders': "📭 No available orders at the moment.",
         'take_btn': "✅ Accept order for {price} MDL",
         'cancel_btn': "❌ Decline",
-        'order_taken': "🤝 You accepted the order! Proceed to point A.\nℹ️ Info:\n📞 Sender: {p_send}\n📞 Receiver: {p_recv}\n💬 Comment: {comm}\n🗺 OSRM Route: {url}",
+        'order_taken': "🤝 You accepted the order! Proceed to point A.\nℹ️ Info:\n📞 Sender: {p_send}\n📞 Receiver: {p_recv}\n💬 Comment: {comm}\n🗺 Google Maps Route: {url}",
         'at_a_btn': "📍 I am at point A",
         'at_b_btn': "🏁 I am at destination (Point B)",
         'done_btn': "💵 Complete",
@@ -210,7 +210,7 @@ TEXTS = {
         'no_orders': "📭 На даний момент немає вільних замовлень.",
         'take_btn': "✅ Прийняти замовлення за {price} MDL",
         'cancel_btn': "❌ Відмовитися",
-        'order_taken': "🤝 Ви прийняли замовлення! Рухайтесь на точку А.\nℹ️ Інфо:\n📞 Відправник: {p_send}\n📞 Отримувач: {p_recv}\n💬 Коментар: {comm}\n🗺 Маршрут OSRM: {url}",
+        'order_taken': "🤝 Ви прийняли замовлення! Рухайтесь на точку А.\nℹ️ Інфо:\n📞 Відправник: {p_send}\n📞 Отримувач: {p_recv}\n💬 Коментар: {comm}\n🗺 Маршрут Google Maps: {url}",
         'at_a_btn': "📍 Я на точці А",
         'at_b_btn': "🏁 Я на місці (Точка Б)",
         'done_btn': "💵 Завершити",
@@ -251,7 +251,7 @@ TEXTS = {
         'no_orders': "📭 Momentan nu sunt comenzi disponibile.",
         'take_btn': "✅ Acceptă comanda pentru {price} MDL",
         'cancel_btn': "❌ Refuză",
-        'order_taken': "🤝 Ați acceptat comanda! Mergi la punctul A.\nℹ️ Info:\n📞 Expeditor: {p_send}\n📞 Receptor: {p_recv}\n💬 Comm: {comm}\n🗺 Traseu OSRM: {url}",
+        'order_taken': "🤝 Ați acceptat comanda! Mergi la punctul A.\nℹ️ Info:\n📞 Expeditor: {p_send}\n📞 Receptor: {p_recv}\n💬 Comm: {comm}\n🗺 Traseu Google Maps: {url}",
         'at_a_btn': "📍 Sunt la punctul A",
         'at_b_btn': "🏁 Sunt la destinație (Punctul B)",
         'done_btn': "💵 Finalizează",
@@ -259,7 +259,7 @@ TEXTS = {
         'client_notif_courier_at_b': "🔔 Curierul este la destinație (Punctul B)! Ridicați coletul.",
         'cant_cancel': "⚠️ Nu se poate anula după ce curierul a acceptat-o.",
         'order_cancelled': "🗑 Comanda a fost anulată.",
-        'invalid_geo': "⚠️ Vă rugăm să foloseți butonul „📍 Trimiteți locația” de mai jos 👇",
+        'invalid_geo': "⚠️ Vă rugăm să folosiți butonul „📍 Trimiteți locația” de mai jos 👇",
         'support_req': "📝 Scrieți solicitarea dvs. într-un singur mesaj. Administratorul va răspunde aici:",
         'support_sent': "⏳ Solicitarea a fost trimisă. Așteptați răspunsul.",
         'support_reply_header': "🔔 **Răspuns de la suport:**\n\n",
@@ -705,13 +705,10 @@ async def process_admin_reply_send(message: Message, state: FSMContext):
         
     await state.clear()
 
-# --- РАСЧЕТ МАРШРУТА OSRM ---
+# --- РАСЧЕТ МАРШРУТА GOOGLE MAPS & OSRM ---
 async def get_osrm_data(lat1, lon1, lat2, lon2):
-    map_url = (
-        f"https://www.openstreetmap.org/directions"
-        f"?engine=fossgis_osrm_car"
-        f"&route={lat1}%2C{lon1}%3B{lat2}%2C{lon2}"
-    )
+    # Google Maps URL for driving route
+    map_url = f"https://www.google.com/maps/dir/?api=1&origin={lat1},{lon1}&destination={lat2},{lon2}&travelmode=driving"
     osrm_api = (
         f"https://router.project-osrm.org/route/v1/driving/"
         f"{lon1},{lat1};{lon2},{lat2}"
@@ -725,7 +722,7 @@ async def get_osrm_data(lat1, lon1, lat2, lon2):
                 if data.get("routes"):
                     dist_km = data["routes"][0]["distance"] / 1000
     except Exception as e:
-        logging.error(f"OSRM Routing error: {e}")
+        logging.error(f"Routing distance fetch error: {e}")
 
     return round(dist_km, 2), map_url
 
@@ -733,6 +730,695 @@ async def get_osrm_data(lat1, lon1, lat2, lon2):
 
 async def handle_ping(request):
     return web.Response(text="Keep Alive OK", status=200)
+
+def get_config_path():
+    import os
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/update_config.json"
+    return "update_config.json"
+
+def get_apk_path():
+    import os
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/app-release.apk"
+    return "app-release.apk"
+
+def get_update_config():
+    import os
+    import json
+    default_config = {
+        "latest_version": "2.1.4",
+        "update_message_ru": "⚡️ Доступно новое полнофункциональное обновление! Нажмите «Обновить сейчас» для скачивания актуального APK-файла.",
+        "update_message_ro": "⚡️ O nouă actualizare completă este disponibilă! Apăsați «Actualizează acum» pentru a descărca fișierul APK actual.",
+        "update_message_en": "⚡️ A new full update is available! Tap 'Update Now' to download the latest APK file.",
+        "force_update": True,
+        "new_features": ["Chisinau Autocomplete", "Live Delivery Timer", "40 MDL Base Fare", "Optimized Fluid Interactive Map"]
+    }
+    config_path = get_config_path()
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error reading update config: {e}")
+    return default_config
+
+def save_update_config(config):
+    import json
+    config_path = get_config_path()
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        logging.error(f"Error saving update config: {e}")
+        return False
+
+async def handle_app_update_api(request):
+    """
+    API для Android: Проверка обновлений "на лету" без переустановки APK.
+    Возвращает актуальный статус и сообщения для пользователей из динамического конфига.
+    """
+    config = get_update_config()
+    return web.json_response({
+        "success": True,
+        "latest_version": config.get("latest_version", "2.1.4"),
+        "update_message_ru": config.get("update_message_ru", ""),
+        "update_message_ro": config.get("update_message_ro", ""),
+        "update_message_en": config.get("update_message_en", ""),
+        "force_update": config.get("force_update", True),
+        "new_features": config.get("new_features", []),
+        "apk_url": "/api/download-apk"
+    })
+
+async def handle_download_apk_api(request):
+    """
+    API для Android: Скачивание актуального APK-файла обновления.
+    Если файл app-release.apk существует, отдает его.
+    """
+    import os
+    apk_path = get_apk_path()
+    if os.path.exists(apk_path):
+        return web.FileResponse(
+            path=apk_path,
+            headers={
+                "Content-Disposition": 'attachment; filename="delivery-app-update.apk"'
+            }
+        )
+    else:
+        # Если APK нет, редиректим на админку загрузки
+        raise web.HTTPFound('/admin/upload')
+
+async def handle_admin_panel(request):
+    """
+    Веб-панель администратора для удобной и безопасной загрузки APK и настройки обновлений.
+    """
+    import os
+    from datetime import datetime
+    
+    config = get_update_config()
+    apk_path = get_apk_path()
+    
+    if os.path.exists(apk_path):
+        size_bytes = os.path.getsize(apk_path)
+        apk_size = f"{size_bytes / (1024 * 1024):.2f} MB"
+        mtime = os.path.getmtime(apk_path)
+        apk_date = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+    else:
+        apk_size = "Не загружен"
+        apk_date = "—"
+        
+    features_raw = "\n".join(config.get("new_features", []))
+    force_checked = "checked" if config.get("force_update", True) else ""
+    
+    html_template = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель Администратора | Обновление Delivery App</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0d0f12;
+            --card-bg: #14181f;
+            --primary: #22c55e;
+            --primary-hover: #16a34a;
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: #1e293b;
+            --error-color: #ef4444;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 30px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
+        }
+
+        header h1 {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        header h1 span {
+            color: var(--primary);
+        }
+
+        .badge {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--primary);
+            padding: 6px 12px;
+            border-radius: 50px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .status-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .status-card .label {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .status-card .value {
+            font-size: 18px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .status-card .value.active {
+            color: var(--primary);
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-color);
+        }
+
+        input[type="text"], textarea, input[type="password"] {
+            width: 100%;
+            background: #090b0d;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px 16px;
+            color: var(--text-color);
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        input[type="text"]:focus, textarea:focus, input[type="password"]:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            accent-color: var(--primary);
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .upload-zone {
+            border: 2px dashed var(--border-color);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(255, 255, 255, 0.01);
+            margin-bottom: 30px;
+            position: relative;
+        }
+
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(34, 197, 94, 0.02);
+        }
+
+        .upload-zone svg {
+            width: 48px;
+            height: 48px;
+            fill: var(--text-muted);
+            margin-bottom: 16px;
+            transition: all 0.2s;
+        }
+
+        .upload-zone:hover svg, .upload-zone.dragover svg {
+            fill: var(--primary);
+            transform: translateY(-4px);
+        }
+
+        .upload-zone p {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .upload-zone .highlight {
+            color: var(--text-color);
+            font-weight: 600;
+        }
+
+        .file-info {
+            display: none;
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .progress-container {
+            display: none;
+            margin-bottom: 24px;
+        }
+
+        .progress-bar-wrapper {
+            background: #090b0d;
+            border-radius: 50px;
+            height: 10px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        .progress-bar {
+            background: var(--primary);
+            width: 0%;
+            height: 100%;
+            transition: width 0.1s ease-out;
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        button.btn-submit {
+            width: 100%;
+            background: var(--primary);
+            color: #090b0d;
+            border: none;
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        button.btn-submit:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        button.btn-submit:active {
+            transform: translateY(0);
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 10px;
+            margin-bottom: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            display: none;
+        }
+
+        .alert-success {
+            background: rgba(34, 197, 94, 0.1);
+            color: var(--primary);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 110, 0.1);
+            color: var(--error-color);
+            border: 1px solid rgba(239, 68, 110, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📦 <span>OTA</span> Update Center</h1>
+            <div class="badge">Render Admin</div>
+        </header>
+
+        <div id="alert-success" class="alert alert-success"></div>
+        <div id="alert-error" class="alert alert-error"></div>
+
+        <div class="status-grid">
+            <div class="status-card">
+                <div class="label">Текущая Версия</div>
+                <div class="value active" id="stat-version">{current_version}</div>
+            </div>
+            <div class="status-card">
+                <div class="label">Размер APK файла</div>
+                <div class="value" id="stat-apk-size">{apk_size}</div>
+            </div>
+            <div class="status-card">
+                <div class="label">Последнее изменение</div>
+                <div class="value" id="stat-apk-date" style="font-size: 13px;">{apk_date}</div>
+            </div>
+        </div>
+
+        <form id="upload-form" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="latest_version">Номер новой версии (например, 2.1.5)</label>
+                <input type="text" id="latest_version" name="latest_version" value="{current_version}" required placeholder="2.1.5">
+            </div>
+
+            <div class="form-group">
+                <label for="message_ru">Текст обновления на русском (RU)</label>
+                <textarea id="message_ru" name="message_ru" rows="2" required placeholder="⚡️ Доступно новое обновление...">{message_ru}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="message_ro">Текст обновления на румынском (RO)</label>
+                <textarea id="message_ro" name="message_ro" rows="2" required placeholder="⚡️ O nouă actualizare...">{message_ro}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="message_en">Текст обновления на английском (EN)</label>
+                <textarea id="message_en" name="message_en" rows="2" required placeholder="⚡️ A new update is available...">{message_en}</textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="features">Что нового? (одно изменение на строку)</label>
+                <textarea id="features" name="features" rows="4" placeholder="Chisinau Autocomplete&#10;Live Delivery Timer">{features_raw}</textarea>
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="force_update" name="force_update" value="true" {force_checked}>
+                <label for="force_update" style="margin-bottom: 0; cursor: pointer;">Обязательное обновление (пользователь не сможет закрыть окно)</label>
+            </div>
+
+            <div class="form-group">
+                <label>Загрузить новый APK-файл (drag-and-drop или клик)</label>
+                <div class="upload-zone" id="drop-zone">
+                    <svg viewBox="0 0 24 24">
+                        <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                    </svg>
+                    <p class="highlight">Перетащите сюда APK или нажмите для выбора</p>
+                    <p>Поддерживается только формат .apk</p>
+                    <input type="file" id="file-input" name="apk_file" accept=".apk" style="display: none;">
+                    <div id="file-display" class="file-info"></div>
+                </div>
+            </div>
+
+            <div class="progress-container" id="progress-container">
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                <div class="progress-text">
+                    <span id="progress-percent">0%</span>
+                    <span id="progress-bytes">0 / 0 MB</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password">🔑 Пароль Администратора (для защиты от взлома)</label>
+                <input type="password" id="password" name="password" required placeholder="Введите ваш ADMIN_PASSWORD с Render">
+            </div>
+
+            <button type="submit" class="btn-submit">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                Выпустить Обновление по всем Устройствам
+            </button>
+        </form>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileDisplay = document.getElementById('file-display');
+        const form = document.getElementById('upload-form');
+        const successAlert = document.getElementById('alert-success');
+        const errorAlert = document.getElementById('alert-error');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const progressPercent = document.getElementById('progress-percent');
+        const progressBytes = document.getElementById('progress-bytes');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'));
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length) {
+                const file = e.dataTransfer.files[0];
+                if (file.name.endsWith('.apk')) {
+                    fileInput.files = e.dataTransfer.files;
+                    updateFileDisplay(file);
+                } else {
+                    showAlert(errorAlert, 'Пожалуйста, выберите корректный файл .apk!');
+                }
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                updateFileDisplay(fileInput.files[0]);
+            }
+        });
+
+        function updateFileDisplay(file) {
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+            fileDisplay.innerHTML = `✓ Выбран файл: <strong>${file.name}</strong> (\${sizeMB} MB)`;
+            fileDisplay.style.display = 'block';
+        }
+
+        function showAlert(element, text) {
+            successAlert.style.display = 'none';
+            errorAlert.style.display = 'none';
+            element.textContent = text;
+            element.style.display = 'block';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(form);
+            const forceCheckbox = document.getElementById('force_update');
+            formData.set('force_update', forceCheckbox.checked ? "true" : "false");
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/admin/upload', true);
+
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
+                    const totalMB = (e.total / (1024 * 1024)).toFixed(1);
+                    
+                    progressBar.style.width = percent + '%';
+                    progressPercent.textContent = percent + '%';
+                    progressBytes.textContent = `\${loadedMB} / \${totalMB} MB`;
+                }
+            });
+
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState === XMLHttpRequest.DONE) {
+                    progressContainer.style.display = 'none';
+                    try {
+                        const response = JSON.parse(xhr.responseText);
+                        if (xhr.status === 200 && response.success) {
+                            showAlert(successAlert, '🚀 Ура! Обновление успешно выпущено на все устройства клиентов!');
+                            
+                            document.getElementById('stat-version').textContent = document.getElementById('latest_version').value;
+                            if (fileInput.files.length) {
+                                const sizeMB = (fileInput.files[0].size / (1024 * 1024)).toFixed(2) + ' MB';
+                                document.getElementById('stat-apk-size').textContent = sizeMB;
+                                document.getElementById('stat-apk-date').textContent = 'Только что';
+                            }
+                            
+                            fileInput.value = '';
+                            fileDisplay.style.display = 'none';
+                        } else {
+                            showAlert(errorAlert, '❌ Ошибка: ' + (response.error || 'Неизвестная ошибка на сервере.'));
+                        }
+                    } catch (err) {
+                        showAlert(errorAlert, '❌ Ошибка обработки ответа сервера.');
+                    }
+                }
+            };
+
+            xhr.send(formData);
+        });
+    </script>
+</body>
+</html>"""
+    
+    html_filled = html_template.format(
+        current_version=config.get("latest_version", "2.1.4"),
+        message_ru=config.get("update_message_ru", ""),
+        message_ro=config.get("update_message_ro", ""),
+        message_en=config.get("update_message_en", ""),
+        features_raw=features_raw,
+        force_checked=force_checked,
+        apk_size=apk_size,
+        apk_date=apk_date
+    )
+    
+    return web.Response(text=html_filled, content_type="text/html")
+
+async def handle_admin_upload(request):
+    """
+    Обработчик загрузки APK-файла и обновления конфигурации.
+    """
+    import os
+    
+    reader = await request.multipart()
+    
+    password = ""
+    latest_version = ""
+    message_ru = ""
+    message_ro = ""
+    message_en = ""
+    features_raw = ""
+    force_update = True
+    file_data = None
+    
+    while True:
+        part = await reader.next()
+        if part is None:
+            break
+            
+        if part.name == "password":
+            password = (await part.read()).decode("utf-8").strip()
+        elif part.name == "latest_version":
+            latest_version = (await part.read()).decode("utf-8").strip()
+        elif part.name == "message_ru":
+            message_ru = (await part.read()).decode("utf-8").strip()
+        elif part.name == "message_ro":
+            message_ro = (await part.read()).decode("utf-8").strip()
+        elif part.name == "message_en":
+            message_en = (await part.read()).decode("utf-8").strip()
+        elif part.name == "features":
+            features_raw = (await part.read()).decode("utf-8").strip()
+        elif part.name == "force_update":
+            val = (await part.read()).decode("utf-8").strip()
+            force_update = (val.lower() == "true")
+        elif part.name == "apk_file":
+            filename = part.filename
+            if filename:
+                file_data = bytearray()
+                while True:
+                    chunk = await part.read_chunk()
+                    if not chunk:
+                        break
+                    file_data.extend(chunk)
+
+    # Защитная аутентификация
+    env_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    if password != env_password:
+        return web.json_response({"success": False, "error": "Неверный пароль администратора!"}, status=403)
+
+    # Сохраняем новые настройки в файл динамического обновления
+    config = get_update_config()
+    if latest_version:
+        config["latest_version"] = latest_version
+    if message_ru is not None:
+        config["update_message_ru"] = message_ru
+    if message_ro is not None:
+        config["update_message_ro"] = message_ro
+    if message_en is not None:
+        config["update_message_en"] = message_en
+    config["force_update"] = force_update
+    
+    if features_raw is not None:
+        config["new_features"] = [line.strip() for line in features_raw.split("\n") if line.strip()]
+        
+    save_update_config(config)
+
+    # Сохраняем APK-файл на диск, если он был передан
+    if file_data:
+        apk_path = get_apk_path()
+        try:
+            dir_name = os.path.dirname(apk_path)
+            if dir_name and not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+            with open(apk_path, "wb") as f:
+                f.write(file_data)
+        except Exception as e:
+            return web.json_response({"success": False, "error": f"Ошибка при записи APK на диск: {e}"}, status=500)
+
+    return web.json_response({"success": True, "message": "Настройки и файл обновления успешно сохранены!"})
 
 async def handle_verify_api(request):
     """
@@ -1623,6 +2309,10 @@ async def main():
     
     # Регистрация REST API роутов для работы Android-приложения
     app.router.add_get("/", handle_ping)
+    app.router.add_get("/api/app-update", handle_app_update_api)
+    app.router.add_get("/api/download-apk", handle_download_apk_api)
+    app.router.add_get("/admin/upload", handle_admin_panel)
+    app.router.add_post("/admin/upload", handle_admin_upload)
     app.router.add_post("/api/verify", handle_verify_api)  # Метод проверки 6-значного кода
     app.router.add_post("/api/delete-account/{profileId}", handle_delete_account_api) # Метод удаления профиля
     app.router.add_post("/api/orders", handle_create_order_api)
