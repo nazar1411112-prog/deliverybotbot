@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BotCommand
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -259,7 +259,7 @@ TEXTS = {
         'client_notif_courier_at_b': "🔔 Curierul este la destinație (Punctul B)! Ridicați coletul.",
         'cant_cancel': "⚠️ Nu se poate anula după ce curierul a acceptat-o.",
         'order_cancelled': "🗑 Comanda a fost anulată.",
-        'invalid_geo': "⚠️ Vă rugăm să folosiți butonul „📍 Trimiteți locația” de mai jos 👇",
+        'invalid_geo': "⚠️ Vă rugăm să foloseți butonul „📍 Trimiteți locația” de mai jos 👇",
         'support_req': "📝 Scrieți solicitarea dvs. într-un singur mesaj. Administratorul va răspunde aici:",
         'support_sent': "⏳ Solicitarea a fost trimisă. Așteptați răspunsul.",
         'support_reply_header': "🔔 **Răspuns de la suport:**\n\n",
@@ -448,10 +448,10 @@ async def cmd_verify_app(message: Message):
 
     profile_id = parts[1].strip().upper()
     
-    # Простая валидация длины ID (должно быть 16-20 символов с учетом дефисов)
+    # Простая валидация длины ID (должно быть 15-16 символов с учетом дефисов)
     clean_id = profile_id.replace("-", "")
-    if len(clean_id) != 16:
-        await message.answer("⚠️ Неверный формат ID. ID в приложении должен содержать ровно 16 символов. Проверьте ID на вкладке Профиль!")
+    if len(clean_id) not in (15, 16):
+        await message.answer("⚠️ Неверный формат ID. ID в приложении должен содержать ровно 15 или 16 символов. Проверьте ID на вкладке Профиль!")
         return
 
     # Генерируем 6-значный одноразовый код, действующий ровно 30 секунд
@@ -1542,9 +1542,82 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
+# --- НАСТРОЙКА КОМАНД БОТА ---
+async def set_bot_commands(bot: Bot):
+    commands_en = [
+        BotCommand(command="start", description="Start"),
+        BotCommand(command="order", description="Create order"),
+        BotCommand(command="cancel", description="Cancel order"),
+        BotCommand(command="support", description="Support"),
+        BotCommand(command="online", description="Go online"),
+        BotCommand(command="offline", description="Go offline"),
+        BotCommand(command="orders", description="Available orders"),
+        BotCommand(command="history", description="History & Earnings"),
+        BotCommand(command="verify", description="Bind mobile app")
+    ]
+    
+    lang_commands = {
+        "ru": [
+            BotCommand(command="start", description="Запуск"),
+            BotCommand(command="order", description="Создать заказ"),
+            BotCommand(command="cancel", description="Отмена заказа"),
+            BotCommand(command="support", description="Техподдержка"),
+            BotCommand(command="online", description="Начать смену"),
+            BotCommand(command="offline", description="Закончить смену"),
+            BotCommand(command="orders", description="Доступные заказы"),
+            BotCommand(command="history", description="Статистика и доход"),
+            BotCommand(command="verify", description="Привязать приложение")
+        ],
+        "ro": [
+            BotCommand(command="start", description="Pornire"),
+            BotCommand(command="order", description="Creare comandă"),
+            BotCommand(command="cancel", description="Anulare"),
+            BotCommand(command="support", description="Suport tehnic"),
+            BotCommand(command="online", description="Intrare pe tură"),
+            BotCommand(command="offline", description="Ieșire din tură"),
+            BotCommand(command="orders", description="Comenzi disponibile"),
+            BotCommand(command="history", description="Istoric și câștiguri"),
+            BotCommand(command="verify", description="Conectați aplicația")
+        ],
+        "mo": [
+            BotCommand(command="start", description="Pornire"),
+            BotCommand(command="order", description="Creare comandă"),
+            BotCommand(command="cancel", description="Anulare"),
+            BotCommand(command="support", description="Suport tehnic"),
+            BotCommand(command="online", description="Intrare pe tură"),
+            BotCommand(command="offline", description="Ieșire din tură"),
+            BotCommand(command="orders", description="Comenzi disponibile"),
+            BotCommand(command="history", description="Istoric și câștiguri"),
+            BotCommand(command="verify", description="Conectați aplicația")
+        ],
+        "uk": [
+            BotCommand(command="start", description="Запуск"),
+            BotCommand(command="order", description="Створити замовлення"),
+            BotCommand(command="cancel", description="Скасувати замовлення"),
+            BotCommand(command="support", description="Підтримка"),
+            BotCommand(command="online", description="Почати зміну"),
+            BotCommand(command="offline", description="Закінчити зміну"),
+            BotCommand(command="orders", description="Доступні замовлення"),
+            BotCommand(command="history", description="Статистика та дохід"),
+            BotCommand(command="verify", description="Прив'язати додаток")
+        ]
+    }
+    
+    try:
+        await bot.set_my_commands(commands_en)
+    except Exception as e:
+        logging.error(f"Failed to set default commands: {e}")
+        
+    for lang, cmds in lang_commands.items():
+        try:
+            await bot.set_my_commands(cmds, language_code=lang)
+        except Exception as e:
+            logging.error(f"Failed to set commands for language {lang}: {e}")
+
 # --- СТАРТ СЕРВЕРА С API И BOT ---
 async def main():
     await init_db()
+    await set_bot_commands(bot)
 
     app = web.Application()
     
