@@ -1,8 +1,8 @@
 import os
+import random
 import asyncio
 import logging
-import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncpg
 import aiohttp
 from aiohttp import web
@@ -22,14 +22,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN is not set in environment variables")
+    raise RuntimeError("BOT_TOKEN not set. Укажите BOT_TOKEN в переменных среды!")
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set in environment variables")
-
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/delivery_db")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-PORT = int(os.getenv("PORT", "8080")) # Порт для Render / Railway / Heroku
+PORT = int(os.getenv("PORT", "8080")) # Порт для Render / Railway
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -187,13 +184,12 @@ TEXTS = {
     }
 }
 
-# --- ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ БАЗЫ ДАННЫХ ---
+# --- ИНИЦИАЛИЗАЦИЯ И СЕТАП БАЗЫ ДАННЫХ ---
 async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL)
 
     async with db_pool.acquire() as conn:
-        # Сетка зарегистрированных пользователей
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -201,18 +197,29 @@ async def init_db():
                 lang TEXT DEFAULT 'ru',
                 is_approved BOOLEAN DEFAULT FALSE,
                 is_online BOOLEAN DEFAULT FALSE,
-                username TEXT
+                username TEXT,
+                profile_id TEXT
             );
         """)
 
-        # Черный/Белый список
+        # Таблица для хранения 6-значных кодов активации с привязкой к Profile ID приложения
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS verification_codes (
+                profile_id TEXT PRIMARY KEY,
+                code TEXT NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                telegram_username TEXT,
+                telegram_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS whitelist (
                 user_id BIGINT PRIMARY KEY
             );
         """)
 
-        # Основная таблица заказов
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 id SERIAL PRIMARY KEY,
@@ -234,7 +241,6 @@ async def init_db():
             );
         """)
 
-        # Обращения в поддержку
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id SERIAL PRIMARY KEY,
@@ -247,17 +253,10 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-
-        # Верификационные коды авторизации
+        
+        # Добавляем колонку profile_id в таблицу users, если она отсутствует
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS verifications (
-                profile_id TEXT PRIMARY KEY,
-                telegram_id BIGINT,
-                telegram_username TEXT,
-                telegram_name TEXT,
-                code TEXT,
-                expires_at TIMESTAMP
-            );
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_id TEXT;
         """)
 
 async def get_lang(user_id):
@@ -275,49 +274,81 @@ async def cmd_cancel_anywhere(message: Message, state: FSMContext):
             await message.answer("❌ Операция отменена. Вы вышли из процесса.", reply_markup=ReplyKeyboardRemove())
         else:
             await message.answer("ℹ️ Сейчас нет активного действия.", reply_markup=ReplyKeyboardRemove())
-    except Exception as e:
+    except Exception:
         await state.clear()
         await message.answer("❌ Ошибка отмены, но процесс сброшен.", reply_markup=ReplyKeyboardRemove())
 
-# --- КОМАНДА АВТОРИЗАЦИИ (/verify) ДЛЯ СВЯЗИ С ANDROID ---
+# --- КОМАНДА ВЕРИФИКАЦИИ ДЛЯ КЛИЕНТА ПРИЛОЖЕНИЯ (/verify) ---
 @router.message(Command("verify"))
-async def cmd_verify(message: Message):
+async def cmd_verify_profile(message: Message):
+    lang = await get_lang(message.from_user.id)
     args = message.text.split()
-    if len(args) < 2:
-        await message.answer(
-            "⚠️ **Пожалуйста, укажите ваш ID профиля из Android приложения.**\n"
-            "Пример: `/verify DEL-ABCD-1234-EFGH`",
-            parse_mode="Markdown"
+    
+    # 1. Проверяем аргументы (должен быть передан Profile ID из приложения)
+    if len(args) < 2 or not args[1].startswith("DEL-"):
+        help_text = (
+            "🔑 **Авторизация в Android приложении:**\n\n"
+            "Вы должны передать уникальный ID вашего профиля из приложения.\n"
+            "Пример использования команды:\n"
+            "`/verify DEL-XXXX-XXXX-XXXX`"
         )
+        if lang == 'ro':
+            help_text = (
+                "🔑 **Autorizare în aplicația Android:**\n\n"
+                "Trebuie să introduceți ID-ul unic al profilului dvs. din aplicație.\n"
+                "Exemplu de utilizare a comenzii:\n"
+                "`/verify DEL-XXXX-XXXX-XXXX`"
+            )
+        elif lang == 'en':
+            help_text = (
+                "🔑 **Authorization in Android App:**\n\n"
+                "You must provide your unique profile ID from the app.\n"
+                "Command usage example:\n"
+                "`/verify DEL-XXXX-XXXX-XXXX`"
+            )
+        await message.answer(help_text, parse_mode="Markdown")
         return
         
     profile_id = args[1].strip().upper()
-    if not profile_id.startswith("DEL-"):
-        await message.answer("⚠️ Неверный формат ID профиля. Он должен начинаться с `DEL-`")
-        return
-        
-    code = f"{random.randint(100000, 999999)}"
-    tg_user = message.from_user.username or ""
-    tg_name = message.from_user.full_name or ""
     
+    # 2. Генерируем случайный 6-значный цифровой код
+    activation_code = "".join(str(random.randint(0, 9)) for _ in range(6))
+    
+    # Данные пользователя Telegram
+    tg_id = message.from_user.id
+    tg_username = message.from_user.username or ""
+    tg_name = message.from_user.full_name or "User"
+    
+    # 3. Сохраняем код в базу данных (с заменой, если он уже запрашивался ранее)
     async with db_pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO verifications (profile_id, telegram_id, telegram_username, telegram_name, code, expires_at)
-            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP + INTERVAL '30 seconds')
-            ON CONFLICT (profile_id) DO UPDATE SET 
-                telegram_id = $2, 
-                telegram_username = $3, 
-                telegram_name = $4, 
-                code = $5, 
-                expires_at = CURRENT_TIMESTAMP + INTERVAL '30 seconds';
-        """, profile_id, message.from_user.id, tg_user, tg_name, code)
+            INSERT INTO verification_codes (profile_id, code, telegram_id, telegram_username, telegram_name, created_at)
+            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+            ON CONFLICT (profile_id) DO UPDATE 
+            SET code = $2, telegram_id = $3, telegram_username = $4, telegram_name = $5, created_at = CURRENT_TIMESTAMP
+        """, profile_id, activation_code, tg_id, tg_username, tg_name)
         
-    await message.answer(
-        f"🔑 **Ваш код авторизации:**\n\n"
-        f"`{code}`\n\n"
-        f"⏳ Код действителен ровно 30 секунд. Скопируйте и введите его в Android-приложении.",
-        parse_mode="Markdown"
+    # 4. Отправляем пользователю код, который он введет в приложении
+    response_text = (
+        f"🔐 **Ваш код активации:** `{activation_code}`\n\n"
+        f"Введите его в форму подтверждения внутри Android приложения.\n"
+        f"⚠️ Код действителен в течение **5 минут**."
     )
+    if lang == 'ro':
+        response_text = (
+            f"🔐 **Codul dvs. de activare:** `{activation_code}`\n\n"
+            f"Introduceți-l în formularul de confirmare din interiorul aplicației Android.\n"
+            f"⚠️ Codul este valabil timp de **5 minute**."
+        )
+    elif lang == 'en':
+        response_text = (
+            f"🔐 **Your activation code:** `{activation_code}`\n\n"
+            f"Enter it into the confirmation field in your Android application.\n"
+            f"⚠️ Code is valid for **5 minutes**."
+        )
+        
+    await message.answer(response_text, parse_mode="Markdown")
+    logging.info(f"Сгенерирован код {activation_code} для профиля {profile_id} (TG: {tg_id})")
 
 # --- КОМАНДА ИСТОРИИ И ЗАРАБОТКА ДЛЯ КУРЬЕРОВ (/history) ---
 @router.message(Command("history"))
@@ -409,6 +440,7 @@ async def cmd_reset_orders(message: Message, state: FSMContext):
 
     for order_id, task in list(active_afk_tasks.items()):
         task.cancel()
+        logging.info(f"Таймер AFK для заказа #{order_id} принудительно остановлен.")
     active_afk_tasks.clear()
 
     async with db_pool.acquire() as conn:
@@ -440,6 +472,7 @@ async def cb_refresh_panel(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("p_hist_"))
 async def cb_admin_view_history(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
+    
     courier_id = int(callback.data.split("_")[2])
     
     async with db_pool.acquire() as conn:
@@ -505,7 +538,7 @@ async def cb_panel_unban(callback: CallbackQuery):
     target_id = int(callback.data.split("_")[2])
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE users SET is_approved = TRUE WHERE user_id = $1", target_id)
-    await callback.answer(f"Курьер {target_id} одобрен / разбанен", show_alert=True)
+    await callback.answer(f"Курьер {target_id} одобрен", show_alert=True)
     try: await bot.send_message(target_id, "🎉 Администратор одобрил ваш профиль/разблокировал вас!")
     except Exception: pass
     await render_admin_panel(callback)
@@ -522,24 +555,15 @@ async def process_support_message(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
     tg_user = f"@{message.from_user.username}" if message.from_user.username else "Нет юзернейма"
     
-    # Сначала сохраняем тикет в БД, чтобы приложение в реальном времени подгрузило
-    async with db_pool.acquire() as conn:
-        ticket_id = await conn.fetchval("""
-            INSERT INTO support_tickets (client_id, name, username, message)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id
-        """, message.from_user.id, message.from_user.full_name, message.from_user.username or "", message.text)
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✉️ Ответить клиенту", callback_data=f"ticket_reply_{message.from_user.id}")]
     ])
     
     admin_text = (
-        f"📩 **НОВОЕ ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ (Telegram)!**\n\n"
+        f"📩 **НОВОЕ ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ!**\n\n"
         f"👤 Отправитель: {message.from_user.full_name}\n"
         f"🆔 ID пользователя: `{message.from_user.id}`\n"
-        f"📱 Телеграм: {tg_user}\n"
-        f"🎫 Тикет: `#{ticket_id}`\n\n"
+        f"📱 Телеграм: {tg_user}\n\n"
         f"💬 **Текст обращения:**\n{message.text}"
     )
     
@@ -550,7 +574,7 @@ async def process_support_message(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("ticket_reply_"))
 async def cb_start_ticket_reply(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID: return
-    target_user_id = int(callback.data.split("_")[2])
+    target_user_id = int(callback.data.split("_")[3]) # Исправлен сплит (ticket_reply_id)
     
     await state.update_data(reply_target_id=target_user_id)
     await callback.message.answer(f"✍️ Введите текст ответа для пользователя `{target_user_id}`. Он будет отправлен мгновенно:")
@@ -571,7 +595,7 @@ async def process_admin_reply_send(message: Message, state: FSMContext):
     target_lang = await get_lang(target_id)
     full_reply = f"{TEXTS[target_lang]['support_reply_header']}{message.text}"
     
-    # 1. Записываем ответ в БД для поддержки
+    # 1. Сохраняем ответ в базу данных, чтобы Android-приложение моментально загрузило его
     async with db_pool.acquire() as conn:
         await conn.execute("""
             UPDATE support_tickets 
@@ -579,12 +603,12 @@ async def process_admin_reply_send(message: Message, state: FSMContext):
             WHERE client_id = $2 AND status = 'open'
         """, message.text, target_id)
 
-    # 2. Дублируем в ЛС Telegram пользователя
+    # 2. Дублируем ответ в Telegram пользователя (если он зарегистрирован у бота)
     try:
         await bot.send_message(target_id, full_reply, parse_mode="Markdown")
-        await message.answer(f"✅ Ответ успешно сохранен в базу данных и продублирован в Telegram пользователю `{target_id}`.")
+        await message.answer(f"✅ Ответ успешно сохранен в базу данных и отправлен в Telegram пользователю `{target_id}`.")
     except Exception as e:
-        await message.answer(f"✅ Ответ сохранен в БД и доступен в Android приложении. (Не удалось отправить в ЛС Telegram: {e})")
+        await message.answer(f"✅ Ответ успешно сохранен в БД и доступен в Android-приложении. (В Telegram отправить не удалось: {e})")
         
     await state.clear()
 
@@ -612,63 +636,111 @@ async def get_osrm_data(lat1, lon1, lat2, lon2):
 
     return round(dist_km, 2), map_url
 
+
+# ==============================================================================
 # --- HTTP СЕРВЕР И REST API ДЛЯ ANDROID ПРИЛОЖЕНИЯ ---
+# ==============================================================================
 
 async def handle_ping(request):
     return web.Response(text="Keep Alive OK", status=200)
 
-async def handle_verify_api(request):
-    """ POST /api/verify: Проверка 6-значного кода и привязка профиля к Telegram """
+async def handle_verify_code_api(request):
+    """
+    [POST] /api/verify
+    Обрабатывает запрос на авторизацию от Android-приложения.
+    Принимает: JSON { "profile_id": "DEL-XXXX-XXXX-XXXX", "code": "123456" }
+    """
     try:
         data = await request.json()
-        profile_id = data['profile_id'].strip().upper()
-        code = data['code'].strip()
+        profile_id = str(data['profile_id']).upper().strip()
+        code = str(data['code']).strip()
         
         async with db_pool.acquire() as conn:
+            # 1. Проверяем наличие записи и срок ее жизни (5 минут)
             row = await conn.fetchrow("""
-                SELECT * FROM verifications 
-                WHERE profile_id = $1 AND code = $2 AND expires_at > CURRENT_TIMESTAMP
+                SELECT * FROM verification_codes 
+                WHERE profile_id = $1 AND code = $2 
+                  AND created_at >= CURRENT_TIMESTAMP - INTERVAL '5 minutes'
             """, profile_id, code)
             
-            if row:
-                telegram_id = row['telegram_id']
-                telegram_username = row['telegram_username']
-                telegram_name = row['telegram_name']
-                
-                # Записываем в базу данных как клиента
-                await conn.execute("""
-                    INSERT INTO users (user_id, role, username, is_approved)
-                    VALUES ($1, 'client', $2, TRUE)
-                    ON CONFLICT (user_id) DO UPDATE SET role = 'client', username = $2, is_approved = TRUE
-                """, telegram_id, telegram_username)
-                
-                return web.json_response({
-                    "success": True,
-                    "telegram_id": telegram_id,
-                    "telegram_username": telegram_username,
-                    "telegram_name": telegram_name,
-                    "error": None
-                })
-            else:
+            if not row:
                 return web.json_response({
                     "success": False,
                     "telegram_id": None,
                     "telegram_username": None,
                     "telegram_name": None,
-                    "error": "Неверный код или срок действия (30 сек) истек!"
+                    "error": "Неверный код или срок действия кода (5 мин) истек!"
                 })
+                
+            # 2. Если код верен — привязываем/создаем клиента в таблице users
+            telegram_id = row['telegram_id']
+            username = row['telegram_username']
+            name = row['telegram_name']
+            
+            await conn.execute("""
+                INSERT INTO users (user_id, role, username, profile_id, is_approved, is_online)
+                VALUES ($1, 'client', $2, $3, TRUE, FALSE)
+                ON CONFLICT (user_id) DO UPDATE 
+                SET username = $2, profile_id = $3, role = 'client'
+            """, telegram_id, username, profile_id)
+            
+            # 3. Удаляем использованный код, чтобы предотвратить повторное использование
+            await conn.execute("DELETE FROM verification_codes WHERE profile_id = $1", profile_id)
+            
+        logging.info(f"Успешная API авторизация: {profile_id} привязан к Telegram ID {telegram_id}")
+        
+        return web.json_response({
+            "success": True,
+            "telegram_id": telegram_id,
+            "telegram_username": username,
+            "telegram_name": name,
+            "error": None
+        })
     except Exception as e:
-        logging.error(f"Error verifying code via API: {e}")
+        logging.error(f"Error in handle_verify_code_api: {e}")
         return web.json_response({
             "success": False,
             "telegram_id": None,
             "telegram_username": None,
             "telegram_name": None,
+            "error": f"Внутренняя ошибка сервера: {str(e)}"
+        }, status=500)
+
+async def handle_delete_account_api(request):
+    """
+    [POST] /api/delete-account/{profileId}
+    Полностью удаляет профиль пользователя по его уникальному Profile ID.
+    """
+    try:
+        profile_id = str(request.match_info['profileId']).upper().strip()
+        
+        async with db_pool.acquire() as conn:
+            # Находим пользователя
+            user = await conn.fetchrow("SELECT user_id FROM users WHERE profile_id = $1", profile_id)
+            if user:
+                user_id = user['user_id']
+                # Очищаем его активные заказы и тикеты поддержки
+                await conn.execute("DELETE FROM orders WHERE client_id = $1 AND status = 'pending'", user_id)
+                await conn.execute("DELETE FROM support_tickets WHERE client_id = $1", user_id)
+                # Удаляем самого пользователя
+                await conn.execute("DELETE FROM users WHERE user_id = $1", user_id)
+                logging.info(f"Профиль {profile_id} и связанные данные пользователя {user_id} удалены.")
+            else:
+                logging.warning(f"Запрос на удаление несуществующего профиля {profile_id}")
+                
+        return web.json_response({
+            "success": True,
+            "error": None
+        })
+    except Exception as e:
+        logging.error(f"Error deleting account via API: {e}")
+        return web.json_response({
+            "success": False,
             "error": str(e)
         }, status=400)
 
 async def handle_create_order_api(request):
-    """ POST /api/orders: Создание заказа из Android приложения """
+    """ API для Android: Создание нового заказа курьеру """
     try:
         data = await request.json()
         client_id = int(data['client_id'])
@@ -731,7 +803,7 @@ async def handle_create_order_api(request):
         }, status=400)
 
 async def handle_get_active_order_api(request):
-    """ GET /api/orders/active/{clientId}: Загрузка текущего активного заказа """
+    """ API для Android: Получение текущего активного заказа """
     try:
         client_id = int(request.match_info['clientId'])
         async with db_pool.acquire() as conn:
@@ -763,7 +835,9 @@ async def handle_get_active_order_api(request):
             "price": float(row['price']),
             "status": row['status'],
             "courier_id": row['courier_id'],
-            "courier_name": row['courier_name']
+            "courier_name": row['courier_name'],
+            "courier_lat": None,
+            "courier_lon": None
         }
         
         return web.json_response({
@@ -780,7 +854,7 @@ async def handle_get_active_order_api(request):
         }, status=400)
 
 async def handle_cancel_order_api(request):
-    """ POST /api/orders/{id}/cancel: Отмена заказа пользователем """
+    """ API для Android: Отмена заказа клиентом """
     try:
         order_id = int(request.match_info['id'])
         async with db_pool.acquire() as conn:
@@ -811,7 +885,7 @@ async def handle_cancel_order_api(request):
         }, status=400)
 
 async def handle_get_order_history_api(request):
-    """ GET /api/orders/history/{clientId}: Получение истории за последние 50 заказов """
+    """ API для Android: Получение истории заказов """
     try:
         client_id = int(request.match_info['clientId'])
         async with db_pool.acquire() as conn:
@@ -838,7 +912,9 @@ async def handle_get_order_history_api(request):
                 "price": float(row['price']),
                 "status": row['status'],
                 "courier_id": row['courier_id'],
-                "courier_name": row['courier_name']
+                "courier_name": row['courier_name'],
+                "courier_lat": None,
+                "courier_lon": None
             })
             
         return web.json_response({
@@ -855,7 +931,7 @@ async def handle_get_order_history_api(request):
         }, status=400)
 
 async def handle_submit_support_api(request):
-    """ POST /api/support: Создание тикета поддержки из Android """
+    """ API для Android: Отправка тикета в поддержку """
     try:
         data = await request.json()
         client_id = int(data['client_id'])
@@ -870,6 +946,7 @@ async def handle_submit_support_api(request):
                 RETURNING id
             """, client_id, name, username, text)
             
+        # Уведомляем администратора в Telegram
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✉️ Ответить клиенту", callback_data=f"ticket_reply_{client_id}")]
         ])
@@ -902,7 +979,7 @@ async def handle_submit_support_api(request):
         }, status=400)
 
 async def handle_get_support_tickets_api(request):
-    """ GET /api/support/{clientId}: Загрузка чата поддержки в Android """
+    """ API для Android: Загрузка истории чата поддержки """
     try:
         client_id = int(request.match_info['clientId'])
         async with db_pool.acquire() as conn:
@@ -936,33 +1013,7 @@ async def handle_get_support_tickets_api(request):
             "error": str(e)
         }, status=400)
 
-async def handle_delete_account_api(request):
-    """ POST /api/delete-account/{profileId}: Полное удаление аккаунта пользователя (GDPR) """
-    try:
-        profile_id = request.match_info['profileId']
-        async with db_pool.acquire() as conn:
-            # Находим telegram_id привязанный к этому профилю
-            row = await conn.fetchrow("SELECT telegram_id FROM verifications WHERE profile_id = $1", profile_id)
-            if row:
-                tg_id = row['telegram_id']
-                # Удаляем все связанные данные из всех таблиц
-                await conn.execute("DELETE FROM verifications WHERE profile_id = $1", profile_id)
-                await conn.execute("DELETE FROM support_tickets WHERE client_id = $1", tg_id)
-                await conn.execute("DELETE FROM orders WHERE client_id = $1", tg_id)
-                await conn.execute("DELETE FROM users WHERE user_id = $1", tg_id)
-                
-        return web.json_response({
-            "success": True,
-            "error": None
-        })
-    except Exception as e:
-        logging.error(f"Error deleting account via API: {e}")
-        return web.json_response({
-            "success": False,
-            "error": str(e)
-        }, status=400)
-
-# --- БАЗОВЫЕ КОМАНДЫ ТЕЛЕГРАМ-БОТА И РЕГИСТРАЦИЯ ---
+# --- БАЗОВЫЕ КОМАНДЫ И РЕГИСТРАЦИЯ ---
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -1037,7 +1088,7 @@ async def courier_photo_reg(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]["wait_admin"])
     await state.clear()
 
-# --- МЕНЮ КЛИЕНТА В TELEGRAM: СОЗДАНИЕ И ОТМЕНА ЗАКАЗА ---
+# --- МЕНЮ КЛИЕНТА: СОЗДАНИЕ И ОТМЕНА ЗАКАЗА ---
 @router.message(Command("order"))
 async def cmd_order(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -1059,6 +1110,7 @@ async def process_cargo_type(callback: CallbackQuery, state: FSMContext):
     await state.set_state(CreateOrder.addr_a)
     await callback.answer()
 
+# === ИСПРАВЛЕННАЯ ЛОГИКА ГЕОЛОКАЦИИ ===
 @router.message(CreateOrder.addr_a, F.location)
 async def process_addr_a(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
@@ -1079,11 +1131,13 @@ async def process_addr_b(message: Message, state: FSMContext):
     await message.answer(TEXTS[lang]['phone_sender'], reply_markup=ReplyKeyboardRemove())
     await state.set_state(CreateOrder.phone_sender)
 
+# Защита от отправки текста вместо локации
 @router.message(CreateOrder.addr_a)
 @router.message(CreateOrder.addr_b)
 async def invalid_geo_catch(message: Message):
     lang = await get_lang(message.from_user.id)
     await message.answer(TEXTS[lang]['invalid_geo'])
+# ======================================
 
 @router.message(CreateOrder.phone_sender)
 async def process_phone_sender(message: Message, state: FSMContext):
@@ -1098,6 +1152,34 @@ async def process_phone_receiver(message: Message, state: FSMContext):
     await state.update_data(phone_receiver=message.text)
     await message.answer(TEXTS[lang]['comment'])
     await state.set_state(CreateOrder.comment)
+
+@router.message(CreateOrder.comment, Command("skip"))
+async def skip_comment(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
+    data = await state.get_data()
+
+    dist_km, map_url = await get_osrm_data(data['lat_a'], data['lon_a'], data['lat_b'], data['lon_b'])
+
+    rate = 10 if data['cargo_type'] == 'standard' else 20
+    price = round((dist_km * rate) + 40, 2)
+    if price < 60: price = 60.0
+
+    comment = "Нет комментария"
+    await state.update_data(comment=comment, price=price, map_url=map_url)
+
+    c_type_str = "📦 Стандарт" if data['cargo_type'] == 'standard' else "🚚 Грузовой"
+    text = TEXTS[lang]['confirm_title'].format(
+        type=c_type_str, p_send=data['phone_sender'], p_recv=data['phone_receiver'],
+        comm=comment, price=price
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=TEXTS[lang]['yes'], callback_data="order_confirm_yes")],
+        [InlineKeyboardButton(text=TEXTS[lang]['no'], callback_data="order_confirm_no")]
+    ])
+
+    await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+    await state.set_state(CreateOrder.confirm)
 
 @router.message(CreateOrder.comment)
 async def process_comment(message: Message, state: FSMContext):
@@ -1249,13 +1331,14 @@ async def cmd_view_active_orders(message: Message):
         ])
         await message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
-# --- ТАЙМЕРЫ ПРОСТОЯ И НЕАКТИВНОСТИ (AFK) ---
+# --- ТАЙМЕРЫ ПРОСТОЯ И НЕАКТИВНОСТИ (AFK BACKGROUND TASKS) ---
 async def start_afk_inactivity_timer(order_id: int, target_status: str, timeout_seconds: int, client_id: int, courier_id: int):
     await asyncio.sleep(timeout_seconds)
     try:
         async with db_pool.acquire() as conn:
             current_status = await conn.fetchval("SELECT status FROM orders WHERE id = $1", order_id)
             if current_status == target_status:
+                logging.warning(f"⏳ Таймер AFK сработал! Заказ #{order_id} завис в статусе '{target_status}'.")
                 try:
                     c_lang = await conn.fetchval("SELECT lang FROM users WHERE user_id = $1", courier_id) or 'ru'
                     alert_text = "⚠️ Вы слишком долго не обновляли статус выполнения заказа! Пожалуйста, актуализируйте данные."
@@ -1268,7 +1351,7 @@ async def start_afk_inactivity_timer(order_id: int, target_status: str, timeout_
                     await bot.send_message(ADMIN_ID, f"🚨 **ВНИМАНИЕ АДМИНА!** Курьер `ID {courier_id}` завис на заказе **#{order_id}** в состоянии `{target_status}` более {timeout_seconds // 60} минут!")
                 except Exception: pass
     except Exception as e:
-        logging.error(f"Ошибка AFK таймера для заказа #{order_id}: {e}")
+        logging.error(f"Ошибка выполнения AFK таймера для заказа #{order_id}: {e}")
     finally:
         active_afk_tasks.pop(order_id, None)
 
@@ -1298,7 +1381,7 @@ async def cb_courier_take_order(callback: CallbackQuery):
         p_send=order['phone_sender'], p_recv=order['phone_receiver'], comm=order['comment'], url=map_url
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[[InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"order_ata_{order_id}")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]['at_a_btn'], callback_data=f"order_ata_{order_id}")]])
 
     await bot.send_location(callback.from_user.id, latitude=float(order['lat_a']), longitude=float(order['lon_a']))
     await bot.send_location(callback.from_user.id, latitude=float(order['lat_b']), longitude=float(order['lon_b']))
@@ -1321,7 +1404,7 @@ async def cb_courier_at_point_a(callback: CallbackQuery):
         await conn.execute("UPDATE orders SET status = 'at_a' WHERE id = $1", order_id)
         order = await conn.fetchrow("SELECT client_id FROM orders WHERE id = $1", order_id)
         
-    kb = InlineKeyboardMarkup(inline_keyboard=[[[InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"order_atb_{order_id}")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]['at_b_btn'], callback_data=f"order_atb_{order_id}")]])
     await callback.message.edit_reply_markup(reply_markup=kb)
     
     try:
@@ -1343,7 +1426,7 @@ async def cb_courier_at_point_b(callback: CallbackQuery):
         await conn.execute("UPDATE orders SET status = 'at_b' WHERE id = $1", order_id)
         order = await conn.fetchrow("SELECT client_id FROM orders WHERE id = $1", order_id)
         
-    kb = InlineKeyboardMarkup(inline_keyboard=[[[InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"order_done_{order_id}")]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=TEXTS[lang]['done_btn'], callback_data=f"order_done_{order_id}")]])
     await callback.message.edit_reply_markup(reply_markup=kb)
     
     try:
@@ -1374,22 +1457,26 @@ async def cb_courier_complete_order(callback: CallbackQuery):
         
     await callback.answer()
 
-# --- СТАРТ СЕРВЕРА С API И BOT ---
+
+# ==============================================================================
+# --- ЗАПУСК СЕРВЕРА С REST API И TG BOT ---
+# ==============================================================================
+
 async def main():
     await init_db()
 
     app = web.Application()
     
-    # Роуты API для связки с Android приложением
+    # Регистрация всех REST API роутов для работы Android-приложения
     app.router.add_get("/", handle_ping)
-    app.router.add_post("/api/verify", handle_verify_api)
-    app.router.add_post("/api/orders", handle_create_order_api)
-    app.router.add_get("/api/orders/active/{clientId}", handle_get_active_order_api)
-    app.router.add_post("/api/orders/{id}/cancel", handle_cancel_order_api)
-    app.router.add_get("/api/orders/history/{clientId}", handle_get_order_history_api)
-    app.router.add_post("/api/support", handle_submit_support_api)
-    app.router.add_get("/api/support/{clientId}", handle_get_support_tickets_api)
-    app.router.add_post("/api/delete-account/{profileId}", handle_delete_account_api)
+    app.router.add_post("/api/verify", handle_verify_code_api) # Привязка аккаунта по 6-значному коду
+    app.router.add_post("/api/delete-account/{profileId}", handle_delete_account_api) # Удаление профиля
+    app.router.add_post("/api/orders", handle_create_order_api) # Создание заказа
+    app.router.add_get("/api/orders/active/{clientId}", handle_get_active_order_api) # Получение активного заказа
+    app.router.add_post("/api/orders/{id}/cancel", handle_cancel_order_api) # Отмена заказа
+    app.router.add_get("/api/orders/history/{clientId}", handle_get_order_history_api) # Загрузка истории
+    app.router.add_post("/api/support", handle_submit_support_api) # Отправка тикета
+    app.router.add_get("/api/support/{clientId}", handle_get_support_tickets_api) # История чата техподдержки
 
     runner = web.AppRunner(app)
     await runner.setup()
